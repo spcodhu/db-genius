@@ -1,0 +1,853 @@
+openapi: 3.0.3
+info:
+  title: DB-Genius API
+  description: AI 数据库大师 - 智能 SQL 生成、执行与数据库对比
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8080/api
+    description: 本地开发环境
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: 认证管理
+    description: 登录、登出、用户创建
+  - name: 数据库配置
+    description: 数据库连接配置 CRUD、连通性测试、文档生成
+  - name: AI 对话
+    description: 统一自然语言对话入口，自动识别意图并路由到 SQL 查询、工作流或数据库对比（SSE 流式）
+  - name: 文件上传
+    description: Excel 文件上传
+  - name: 对话管理
+    description: 对话列表、消息、删除
+
+# ========================================================================
+# Paths
+# ========================================================================
+paths:
+
+  # ---- 认证 ----
+  /auth/login:
+    post:
+      tags: [认证管理]
+      summary: 用户登录
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_LoginVO'
+
+  /auth/logout:
+    post:
+      tags: [认证管理]
+      summary: 用户登出
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/user:
+    post:
+      tags: [认证管理]
+      summary: 创建用户（仅管理员）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---- 数据库配置 ----
+  /db-config:
+    get:
+      tags: [数据库配置]
+      summary: 获取当前用户的全部数据库配置
+      responses:
+        '200':
+          description: 配置列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_DbConfigVO_List'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [数据库配置]
+      summary: 新建数据库配置
+      description: |
+        创建配置后，系统会**异步自动**执行：
+        1. 连通性测试 → status 更新为 1（成功）或 2（失败）
+        2. 连通成功时自动生成数据库结构文档（Markdown）
+
+        创建后立即返回 status=0（正在验证），前端应轮询 GET /db-config/{id} 获取最新状态。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DbConfigRequest'
+      responses:
+        '200':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_DbConfigVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /db-config/{id}:
+    get:
+      tags: [数据库配置]
+      summary: 获取单个数据库配置详情
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          $ref: '#/components/responses/DbConfigVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [数据库配置]
+      summary: 更新数据库配置
+      description: |
+        更新配置后，系统会**异步自动**重新验证连通性并重新生成文档。
+        status 重置为 0，docContent 清空，直到异步验证完成。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DbConfigRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/DbConfigVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [数据库配置]
+      summary: 删除数据库配置
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /db-config/{id}/test:
+    post:
+      tags: [数据库配置]
+      summary: 测试数据库连通性
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: 连通性结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_Boolean'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /db-config/{id}/generate-doc:
+    post:
+      tags: [数据库配置]
+      summary: 自动生成数据库说明文档
+      description: 读取数据库元数据（表、字段、索引、数据量），生成 Markdown 格式文档供 AI 使用
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: 文档内容（Markdown）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_String'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /db-config/{id}/doc:
+    get:
+      tags: [数据库配置]
+      summary: 查看已生成的数据库文档
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          $ref: '#/components/responses/String'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---- AI 对话（统一 SSE 流式入口） ----
+  /chat:
+    post:
+      tags: [AI 对话]
+      summary: 统一对话入口（SSE 流式输出）
+      description: |
+        用户输入自然语言描述，系统先进行意图识别，再自动路由到对应的智能体执行。
+
+        **SSE 事件流类型：**
+
+        | type | 含义 | content 格式 |
+        |------|------|-------------|
+        | `classifying` | 正在识别意图 | 字符串，如 "正在分析您的问题..." |
+        | `classified` | 意图识别完成 | JSON 对象：`{"intent": "sql_query", "confidence": 0.95, "reasoning": "...", "needsClarification": false}` |
+        | `clarify` | 需要用户确认意图 | JSON 对象：`{"question": "...", "options": [...], "reasoning": "..."}` |
+        | `routing` | 正在路由到对应处理器 | 字符串，如 "正在启动 SQL 查询智能体..." |
+        | `thinking` | AI 正在分析需求 | 字符串 |
+        | `step` | 每个 Agent 步骤的结果 | 字符串，SQL 执行结果等 |
+        | `content` | 简单会话的流式文本片段 | 字符串 |
+        | `summary` | 最终 Markdown 总结 | Markdown 字符串 |
+        | `error` | 执行出错 | 字符串，错误信息 |
+        | `done` | 流结束信号 | null |
+
+        **意图类型：**
+        - `simple_chat`：简单会话问答，不需要数据库
+        - `sql_query`：SQL 对话查询，需要提供 `dbConfigIds`
+        - `workflow`：复杂工作流，需要提供 `dbConfigIds`，可附加 `fileIds`
+        - `db_compare`：数据库对比，需要提供 `preDbConfigId` 和 `testDbConfigId`
+
+        **低置信度反问：**
+        当系统无法确定意图或缺少前置条件时，会返回 `clarify` 事件并结束连接。前端应展示选项，由用户选择后再发起一次请求，并将选中的意图通过 `confirmedIntent` 字段回传。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnifiedChatRequest'
+      responses:
+        '200':
+          description: SSE 事件流
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/SseEvent'
+              examples:
+                classifying:
+                  summary: 正在识别意图
+                  value:
+                    taskId: "uuid"
+                    step: 0
+                    type: "classifying"
+                    content: "正在分析您的问题..."
+                    timestamp: 1719648000000
+                classified:
+                  summary: 意图识别完成
+                  value:
+                    taskId: "uuid"
+                    step: 0
+                    type: "classified"
+                    content:
+                      intent: "sql_query"
+                      confidence: 0.95
+                      reasoning: "用户要求查询数据库表数据量"
+                      needsClarification: false
+                    timestamp: 1719648001000
+                clarify:
+                  summary: 需要用户确认意图
+                  value:
+                    taskId: "uuid"
+                    step: 0
+                    type: "clarify"
+                    content:
+                      question: "我不太确定您的意图，请选择："
+                      options:
+                        - intent: "sql_query"
+                          label: "查询数据库表结构"
+                        - intent: "simple_chat"
+                          label: "只是想了解相关概念"
+                      reasoning: "消息缺少明确的数据库操作描述"
+                    timestamp: 1719648001000
+                routing:
+                  summary: 正在路由
+                  value:
+                    taskId: "uuid"
+                    step: 0
+                    type: "routing"
+                    content: "正在启动 SQL 查询智能体..."
+                    timestamp: 1719648002000
+                thinking:
+                  summary: AI 分析阶段
+                  value:
+                    taskId: "uuid"
+                    step: 0
+                    type: "thinking"
+                    content: "正在分析您的查询需求..."
+                    timestamp: 1719648003000
+                step_sql:
+                  summary: SQL 生成与执行
+                  value:
+                    taskId: "uuid"
+                    step: 1
+                    type: "step"
+                    content: "Tool executeSql result: {...}"
+                    timestamp: 1719648004000
+                summary:
+                  summary: 任务完成（Markdown 表格）
+                  value:
+                    taskId: "uuid"
+                    step: 2
+                    type: "summary"
+                    content: |
+                      ## 查询结果
+
+                      共查询到 3 条记录：
+
+                      | id | name | age |
+                      |---|---|---|
+                      | 1 | Alice | 20 |
+                      | 2 | Bob | 25 |
+                      | 3 | Carol | 22 |
+                    timestamp: 1719648005000
+                done:
+                  summary: 流结束
+                  value:
+                    taskId: "uuid"
+                    step: -1
+                    type: "done"
+                    content: null
+                    timestamp: 1719648006000
+                error:
+                  summary: 错误
+                  value:
+                    taskId: "uuid"
+                    step: -1
+                    type: "error"
+                    content: "SQL 语法错误：xxx"
+                    timestamp: 1719648006000
+        '400':
+          description: 请求参数校验失败或缺少前置条件
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_Void'
+              example:
+                code: 400
+                message: "Message is required"
+                data: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---- 对话管理 ----
+  /chat/conversations:
+    get:
+      tags: [对话管理]
+      summary: 获取当前用户的对话列表
+      responses:
+        '200':
+          description: 对话列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_ConversationVO_List'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /chat/conversations/{id}/messages:
+    get:
+      tags: [对话管理]
+      summary: 获取某对话的全部消息
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: 消息列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_Message_List'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /chat/conversations/{id}:
+    delete:
+      tags: [对话管理]
+      summary: 删除对话
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---- 文件上传 ----
+  /file/upload:
+    post:
+      tags: [文件上传]
+      summary: 上传文件（Excel）
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Excel 文件（.xlsx / .xls），最大 50MB
+      responses:
+        '200':
+          description: 上传成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_UploadedFile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+# ========================================================================
+# Components
+# ========================================================================
+components:
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        Sa-Token 认证，登录后从 /auth/login 获取 token 值。
+        后续请求需在 Header 中携带 `Authorization: <token>`。
+        若 token 过期、未携带或后端重启导致 token 失效，接口将返回 `code=401`，
+        message 为 `登录已过期，请重新登录`，前端应据此跳转登录弹窗。
+
+  parameters:
+    PathId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  responses:
+    Ok:
+      description: 操作成功
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/R_Void'
+    Unauthorized:
+      description: 未登录或登录已过期（token 失效、未携带 Authorization 等）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/R_Void'
+          example:
+            code: 401
+            message: "登录已过期，请重新登录"
+            data: null
+    DbConfigVO:
+      description: 数据库配置
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/R_DbConfigVO'
+    String:
+      description: 字符串结果
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/R_String'
+
+  schemas:
+
+    # ---- 通用响应 ----
+    R_Void:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: success
+        data:
+          nullable: true
+
+    R_Boolean:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: success
+        data:
+          type: boolean
+
+    R_String:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: success
+        data:
+          type: string
+
+    R_LoginVO:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/LoginVO'
+
+    R_DbConfigVO:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/DbConfigVO'
+
+    R_DbConfigVO_List:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DbConfigVO'
+
+    R_ConversationVO_List:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationVO'
+
+    R_Message_List:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+
+    R_UploadedFile:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/UploadedFile'
+
+    # ---- 请求体 ----
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: admin
+        password:
+          type: string
+          example: admin123
+
+    CreateUserRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        nickname:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]
+          default: user
+
+    DbConfigRequest:
+      type: object
+      required: [name, host, port, dbName, username, password]
+      properties:
+        name:
+          type: string
+          description: 配置名称（用户自定义）
+          example: 生产环境-主库
+        dbType:
+          type: string
+          default: mysql
+          enum: [mysql]
+        host:
+          type: string
+          example: 192.168.1.100
+        port:
+          type: integer
+          example: 3306
+        dbName:
+          type: string
+          example: my_database
+        username:
+          type: string
+          example: root
+        password:
+          type: string
+          example: my_password
+
+    UnifiedChatRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          description: 用户自然语言消息
+          example: 帮我查询年龄大于 18 的女生用户
+        conversationId:
+          type: integer
+          format: int64
+          nullable: true
+          description: 对话 ID，null 则新建对话
+        dbConfigIds:
+          type: array
+          items:
+            type: integer
+            format: int64
+          nullable: true
+          description: 数据库配置 ID 列表（sql_query / workflow 使用）
+          example: [1]
+        preDbConfigId:
+          type: integer
+          format: int64
+          nullable: true
+          description: 生产镜像数据库配置 ID（db_compare 使用）
+        testDbConfigId:
+          type: integer
+          format: int64
+          nullable: true
+          description: 测试环境数据库配置 ID（db_compare 使用）
+        fileIds:
+          type: array
+          items:
+            type: integer
+            format: int64
+          nullable: true
+          description: 已上传的文件 ID 列表（workflow 使用）
+        confirmedIntent:
+          type: string
+          nullable: true
+          enum: [simple_chat, sql_query, workflow, db_compare]
+          description: 用户确认后的意图，传入时跳过 LLM 分类直接路由
+
+    # ---- 响应体 ----
+    LoginVO:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Sa-Token 值，后续请求放入 Authorization header
+          example: "8f7e6d5c-4b3a-2918-7654-3210fedcba98"
+        username:
+          type: string
+          example: admin
+        nickname:
+          type: string
+          example: Administrator
+        role:
+          type: string
+          example: admin
+
+    DbConfigVO:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          example: 生产环境-主库
+        dbType:
+          type: string
+          example: mysql
+        host:
+          type: string
+          example: 192.168.1.100
+        port:
+          type: integer
+          example: 3306
+        dbName:
+          type: string
+          example: my_database
+        username:
+          type: string
+          example: root
+        status:
+          type: integer
+          description: "状态码，对应枚举 DbConfigStatus"
+          enum: [0, 1, 2]
+        statusDesc:
+          type: string
+          description: "状态描述（枚举自带）"
+          example: 连接正常
+          enum: ["正在验证...", "连接正常", "连接异常"]
+        docContent:
+          type: string
+          nullable: true
+          description: 自动生成的 Markdown 格式数据库文档
+        docGeneratedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    ConversationVO:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        type:
+          type: string
+          enum: [simple_chat, sql_query, workflow, db_compare]
+        dbConfigIds:
+          type: string
+          description: 关联的数据库配置 ID（逗号分隔）
+        createdAt:
+          type: string
+          format: date-time
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        conversationId:
+          type: integer
+          format: int64
+        role:
+          type: string
+          enum: [user, assistant, system]
+        content:
+          type: string
+        step:
+          type: integer
+          nullable: true
+          description: Agent 步骤序号
+        type:
+          type: string
+          nullable: true
+          enum: [thinking, sql, result, error, file_parsed, step, summary, done, user,
+                 classifying, classified, clarify, routing, content]
+        fileUrl:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    UploadedFile:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        userId:
+          type: integer
+          format: int64
+        originalName:
+          type: string
+          example: 用户数据.xlsx
+        storedPath:
+          type: string
+        fileSize:
+          type: integer
+          format: int64
+        contentType:
+          type: string
+          example: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+        createdAt:
+          type: string
+          format: date-time
+
+    SseEvent:
+      type: object
+      description: SSE 流式事件，每条 data 为一个 JSON 对象
+      properties:
+        taskId:
+          type: string
+          description: 本次任务唯一 ID，可用于日志追踪
+        step:
+          type: integer
+          description: "Agent 步骤序号，-1 表示终态事件（done/error）"
+        type:
+          type: string
+          description: 事件类型
+          enum: [thinking, step, summary, error, done,
+                 classifying, classified, clarify, routing, content]
+        content:
+          description: |
+            事件内容，根据 type 不同有不同含义：
+            - classifying: "正在分析您的问题..."
+            - classified: {"intent": "sql_query", "confidence": 0.95, ...}
+            - clarify: {"question": "...", "options": [...], "reasoning": "..."}
+            - routing: "正在启动 SQL 查询智能体..."
+            - thinking: AI 分析过程的文字描述
+            - step: 工具执行结果（SQL 结果 JSON、文件解析结果 JSON 等）
+            - content: 简单会话的流式文本片段
+            - summary: 最终 Markdown 总结；查询结果以表格展示，其他任务按结构化 Markdown 展示
+            - error: 错误详情
+            - done: null
+        timestamp:
+          type: integer
+          format: int64
+          description: 毫秒级时间戳
