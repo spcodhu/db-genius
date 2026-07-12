@@ -9,6 +9,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    @ExceptionHandler(TrialBusinessException.class)
+    public R<Void> handleTrialBusinessException(TrialBusinessException e) {
+        log.warn("Trial operation denied: {}", e.getMessage());
+        return R.fail(e.getCode(), e.getMessage());
+    }
+
     @ExceptionHandler(BusinessException.class)
     public R<Void> handleBusinessException(BusinessException e) {
         log.warn("Business exception: {}", e.getMessage());

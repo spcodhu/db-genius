@@ -5,6 +5,7 @@ import com.dbgenius.common.exception.BusinessException;
 import com.dbgenius.mapper.UploadedFileMapper;
 import com.dbgenius.model.entity.UploadedFile;
 import com.dbgenius.service.FileUploadService;
+import com.dbgenius.trial.TrialGuard;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -20,11 +21,14 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class FileUploadServiceImpl extends ServiceImpl<UploadedFileMapper, UploadedFile> implements FileUploadService {
 
+    private final TrialGuard trialGuard;
+
     @Value("${db-genius.file-upload-dir}")
     private String uploadDir;
 
     @Override
     public UploadedFile uploadFile(Long userId, MultipartFile file) {
+        trialGuard.denyIfTrial("试用版暂不支持文件上传");
         if (file.isEmpty()) {
             throw new BusinessException("File is empty");
         }

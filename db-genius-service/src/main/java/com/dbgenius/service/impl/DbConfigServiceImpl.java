@@ -10,6 +10,7 @@ import com.dbgenius.model.entity.DbConfig;
 import com.dbgenius.model.enums.DbConfigStatus;
 import com.dbgenius.model.vo.DbConfigVO;
 import com.dbgenius.service.DbConfigService;
+import com.dbgenius.trial.TrialGuard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,12 +29,16 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     @Value("${db-genius.encrypt-key}")
     private String encryptKey;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private TrialGuard trialGuard;
+
     @Lazy
     @org.springframework.beans.factory.annotation.Autowired
     private DbConfigService self;
 
     @Override
     public DbConfigVO createConfig(Long userId, DbConfigRequest request) {
+        trialGuard.denyIfTrial("试用版暂不支持新增数据库配置");
         DbConfig config = new DbConfig();
         config.setUserId(userId);
         config.setName(request.getName());
@@ -52,6 +57,7 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     @Override
     public DbConfigVO updateConfig(Long userId, Long configId, DbConfigRequest request) {
         DbConfig config = getConfigEntity(userId, configId);
+        trialGuard.denyIfTrialBuiltin(config);
         config.setName(request.getName());
         config.setDbType(request.getDbType() != null ? request.getDbType() : "mysql");
         config.setHost(request.getHost());
@@ -70,6 +76,7 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     @Override
     public void deleteConfig(Long userId, Long configId) {
         DbConfig config = getConfigEntity(userId, configId);
+        trialGuard.denyIfTrialBuiltin(config);
         removeById(config.getId());
     }
 
@@ -89,6 +96,7 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     @Override
     public boolean testConnection(Long userId, Long configId) {
         DbConfig config = getConfigEntity(userId, configId);
+        trialGuard.denyIfTrialBuiltin(config);
         boolean connected = tryConnect(config);
         config.setStatus(connected ? DbConfigStatus.CONNECTED : DbConfigStatus.FAILED);
         updateById(config);
@@ -98,6 +106,7 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     @Override
     public String generateDoc(Long userId, Long configId) {
         DbConfig config = getConfigEntity(userId, configId);
+        trialGuard.denyIfTrialBuiltin(config);
         String doc = buildDatabaseDoc(config);
         config.setDocContent(doc);
         config.setDocGeneratedAt(LocalDateTime.now());
@@ -112,6 +121,12 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
             throw new BusinessException("Documentation not generated yet. Please generate it first.");
         }
         return config.getDocContent();
+    }
+
+    @Override
+    public boolean isBuiltinConfig(Long userId, Long configId) {
+        DbConfig config = getConfigEntity(userId, configId);
+        return trialGuard.isBuiltin(config);
     }
 
     public String getDecryptedPassword(DbConfig config) {
@@ -284,14 +299,26 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
         DbConfigVO vo = new DbConfigVO();
         vo.setId(config.getId());
         vo.setName(config.getName());
-        vo.setDbType(config.getDbType());
-        vo.setHost(config.getHost());
-        vo.setPort(config.getPort());
-        vo.setDbName(config.getDbName());
-        vo.setUsername(config.getUsername());
+
+        boolean mask = trialGuard.isTrialMode() && trialGuard.isBuiltin(config);
+        if (mask) {
+            vo.setDbType("*");
+            vo.setHost("*");
+            vo.setPort(0);
+            vo.setDbName("*");
+            vo.setUsername("*");
+            vo.setDocContent("*");
+        } else {
+            vo.setDbType(config.getDbType());
+            vo.setHost(config.getHost());
+            vo.setPort(config.getPort());
+            vo.setDbName(config.getDbName());
+            vo.setUsername(config.getUsername());
+            vo.setDocContent(config.getDocContent());
+        }
+
         vo.setStatus(config.getStatus().getCode());
         vo.setStatusDesc(config.getStatus().getDesc());
-        vo.setDocContent(config.getDocContent());
         vo.setDocGeneratedAt(config.getDocGeneratedAt());
         vo.setCreatedAt(config.getCreatedAt());
         return vo;

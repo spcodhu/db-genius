@@ -35,3 +35,6 @@ logs/
 
 ### Uploads ###
 uploads/
+
+### Prompt ###
+**/prompt/

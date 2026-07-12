@@ -2,8 +2,9 @@ package com.dbgenius.agent.tool;
 
 import com.dbgenius.common.util.AesUtil;
 import com.dbgenius.model.entity.DbConfig;
-import com.dbgenius.service.DbConfigService;
 import com.dbgenius.model.enums.DbConfigStatus;
+import com.dbgenius.service.DbConfigService;
+import com.dbgenius.trial.TrialGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +22,7 @@ import java.util.*;
 public class SqlExecuteTool {
 
     private final DbConfigService dbConfigService;
+    private final TrialGuard trialGuard;
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${db-genius.encrypt-key}")
@@ -31,6 +33,18 @@ public class SqlExecuteTool {
             @ToolParam(description = "The database configuration ID") Long dbConfigId,
             @ToolParam(description = "The SQL statement to execute") String sql) {
         log.info("Executing SQL on db {}: {}", dbConfigId, sql);
+
+        if (trialGuard.isTrialMode() && !isReadOnlySql(sql)) {
+            log.warn("Trial mode rejected non-readonly SQL: {}", sql);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", false);
+            result.put("error", "试用版仅支持只读查询（SELECT/SHOW/DESC）");
+            try {
+                return objectMapper.writeValueAsString(result);
+            } catch (Exception ex) {
+                return "Error: 试用版仅支持只读查询";
+            }
+        }
 
         DbConfig config;
         try {
@@ -50,9 +64,7 @@ public class SqlExecuteTool {
         String password = AesUtil.decrypt(config.getPasswordEncrypted(), encryptKey);
 
         try (Connection conn = DriverManager.getConnection(url, config.getUsername(), password)) {
-            boolean hasResultSet = sql.trim().toUpperCase().startsWith("SELECT")
-                    || sql.trim().toUpperCase().startsWith("SHOW")
-                    || sql.trim().toUpperCase().startsWith("DESC");
+            boolean hasResultSet = isReadOnlySql(sql);
 
             try (PreparedStatement stmt = conn.prepareStatement(sql)) {
                 if (hasResultSet) {
@@ -100,5 +112,13 @@ public class SqlExecuteTool {
         } catch (Exception e) {
             return "Error: " + e.getMessage();
         }
+    }
+
+    private boolean isReadOnlySql(String sql) {
+        String trimmed = sql.trim().toUpperCase();
+        return trimmed.startsWith("SELECT")
+                || trimmed.startsWith("SHOW")
+                || trimmed.startsWith("DESC")
+                || trimmed.startsWith("EXPLAIN");
     }
 }

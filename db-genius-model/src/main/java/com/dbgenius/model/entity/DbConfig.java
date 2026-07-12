@@ -31,6 +31,8 @@ public class DbConfig {
 
     private DbConfigStatus status;
 
+    private Boolean builtin;
+
     private String docContent;
 
     private LocalDateTime docGeneratedAt;

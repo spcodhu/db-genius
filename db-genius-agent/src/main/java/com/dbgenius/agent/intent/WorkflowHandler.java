@@ -12,6 +12,7 @@ import com.dbgenius.model.vo.IntentClassificationResult;
 import com.dbgenius.service.ConversationService;
 import com.dbgenius.service.DbConfigService;
 import com.dbgenius.service.FileUploadService;
+import com.dbgenius.trial.TrialGuard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -36,6 +37,7 @@ public class WorkflowHandler implements IntentHandler {
     private final SqlExecuteTool sqlExecuteTool;
     private final ExcelParseTool excelParseTool;
     private final TerminateTool terminateTool;
+    private final TrialGuard trialGuard;
 
     @Override
     public IntentType supportedIntent() {
@@ -45,6 +47,7 @@ public class WorkflowHandler implements IntentHandler {
     @Override
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
                        IntentClassificationResult classification, Long userId) {
+        trialGuard.denyIfTrial("试用版暂不支持工作流操作");
         List<Long> dbConfigIds = request.getDbConfigIds();
         if (dbConfigIds == null || dbConfigIds.isEmpty()) {
             throw new IllegalArgumentException("工作流需要至少选择一个数据库配置");

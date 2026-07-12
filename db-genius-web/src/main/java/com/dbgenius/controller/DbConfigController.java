@@ -5,6 +5,7 @@ import com.dbgenius.common.result.R;
 import com.dbgenius.model.dto.DbConfigRequest;
 import com.dbgenius.model.vo.DbConfigVO;
 import com.dbgenius.service.DbConfigService;
+import com.dbgenius.trial.TrialGuard;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -17,6 +18,7 @@ import java.util.List;
 public class DbConfigController {
 
     private final DbConfigService dbConfigService;
+    private final TrialGuard trialGuard;
 
     @PostMapping
     public R<DbConfigVO> create(@Valid @RequestBody DbConfigRequest request) {
@@ -56,6 +58,11 @@ public class DbConfigController {
 
     @GetMapping("/{id}/doc")
     public R<String> getDoc(@PathVariable Long id) {
-        return R.ok(dbConfigService.getDocContent(StpUtil.getLoginIdAsLong(), id));
+        Long userId = StpUtil.getLoginIdAsLong();
+        String content = dbConfigService.getDocContent(userId, id);
+        if (trialGuard.isTrialMode() && dbConfigService.isBuiltinConfig(userId, id)) {
+            return R.ok("*");
+        }
+        return R.ok(content);
     }
 }

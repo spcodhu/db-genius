@@ -12,6 +12,7 @@ import com.dbgenius.model.vo.ConversationVO;
 import com.dbgenius.model.vo.IntentClassificationResult;
 import com.dbgenius.service.ConversationService;
 import com.dbgenius.service.DbConfigService;
+import com.dbgenius.trial.TrialGuard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -35,6 +36,7 @@ public class CompareHandler implements IntentHandler {
     private final DbCompareTool dbCompareTool;
     private final SqlExecuteTool sqlExecuteTool;
     private final TerminateTool terminateTool;
+    private final TrialGuard trialGuard;
 
     @Override
     public IntentType supportedIntent() {
@@ -44,6 +46,7 @@ public class CompareHandler implements IntentHandler {
     @Override
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
                        IntentClassificationResult classification, Long userId) {
+        trialGuard.denyIfTrial("试用版暂不支持数据库对比");
         Long preDbConfigId = request.getPreDbConfigId();
         Long testDbConfigId = request.getTestDbConfigId();
         if (preDbConfigId == null || testDbConfigId == null) {

@@ -47,6 +47,13 @@ sa-token:
 db-genius:
   encrypt-key: ${DB_GENIUS_ENCRYPT_KEY:default-encrypt-key-change-in-production!!}
   file-upload-dir: ${DB_GENIUS_FILE_DIR:/tmp/db-genius/uploads}
+  trial:
+    enabled: ${DB_GENIUS_TRIAL_ENABLED:false}
+    builtin-db-name: ${DB_GENIUS_TRIAL_BUILTIN_DB_NAME:db-genius}
+    builtin-host: ${DB_GENIUS_TRIAL_BUILTIN_HOST:}
+    builtin-port: ${DB_GENIUS_TRIAL_BUILTIN_PORT:3306}
+    builtin-username: ${DB_GENIUS_TRIAL_BUILTIN_USERNAME:}
+    builtin-password: ${DB_GENIUS_TRIAL_BUILTIN_PASSWORD:}
 
 logging:
   level:

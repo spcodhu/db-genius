@@ -218,6 +218,28 @@ When confidence is low or prerequisites are missing, the server emits a `clarify
 |--------|------|-------------|
 | POST | `/file/upload` | Upload file |
 
+### Trial Status
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/trial/status` | Check if trial mode is enabled |
+
+### Contact Sales
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/sales/contact` | Submit sales inquiry (public, no auth) |
+
+## Trial Mode
+
+When `DB_GENIUS_TRIAL_ENABLED=true`, the system runs in public trial mode with the following restrictions:
+
+- A built-in read-only `db-genius` database config is automatically created.
+- Database config connection info (`host`, `port`, `dbName`, `username`, `docContent`) is masked with `*` in API responses.
+- Creating / updating / deleting / testing / regenerating docs for the built-in config is blocked.
+- File upload (`/file/upload`) and user creation (`/auth/user`) are blocked.
+- Only read-only SQL (`SELECT`, `SHOW`, `DESC`, `EXPLAIN`) is allowed in `sql_query` intent.
+- `workflow` and `db_compare` chat intents are blocked.
+- All blocked operations return `403` with code `R.fail(403, "...")`.
+
 ## SSE Event Protocol
 
 All SSE events follow this JSON format:

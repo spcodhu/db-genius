@@ -10,6 +10,7 @@ import com.dbgenius.model.dto.LoginRequest;
 import com.dbgenius.model.entity.SysUser;
 import com.dbgenius.model.vo.LoginVO;
 import com.dbgenius.service.UserService;
+import com.dbgenius.trial.TrialGuard;
 import cn.hutool.crypto.digest.BCrypt;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -20,6 +21,8 @@ public class UserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impleme
 
     private static final String ADMIN_ROLE = "admin";
     private static final String USER_ROLE = "user";
+
+    private final TrialGuard trialGuard;
 
     @Override
     public LoginVO login(LoginRequest request) {
@@ -53,6 +56,7 @@ public class UserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impleme
 
     @Override
     public void createUser(CreateUserRequest request) {
+        trialGuard.denyIfTrial("试用版暂不支持创建用户");
         String role = (String) StpUtil.getSession().get("role");
         if (!ADMIN_ROLE.equals(role)) {
             throw new BusinessException(403, "Only administrators can create users");

@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS db_config (
     username VARCHAR(128) NOT NULL,
     password_encrypted TEXT NOT NULL,
     status SMALLINT NOT NULL DEFAULT 0,
+    builtin SMALLINT NOT NULL DEFAULT 0,
     doc_content TEXT,
     doc_generated_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -61,5 +62,13 @@ CREATE TABLE IF NOT EXISTS uploaded_file (
     stored_path TEXT NOT NULL,
     file_size BIGINT,
     content_type VARCHAR(128),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS sales_contact (
+    id BIGSERIAL PRIMARY KEY,
+    company_name VARCHAR(256) NOT NULL,
+    contact VARCHAR(256) NOT NULL,
+    remark TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );

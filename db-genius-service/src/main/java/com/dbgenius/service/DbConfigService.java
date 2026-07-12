@@ -25,6 +25,8 @@ public interface DbConfigService extends IService<DbConfig> {
 
     String getDocContent(Long userId, Long configId);
 
+    boolean isBuiltinConfig(Long userId, Long configId);
+
     void autoVerifyAndGenerateDoc(Long configId);
 
     void validateConfigForChat(Long userId, Long configId);
