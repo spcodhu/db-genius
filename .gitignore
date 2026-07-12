@@ -27,6 +27,8 @@ Thumbs.db
 
 ### Env ###
 .env
+deploy/.env
+deploy/.env.local
 application-local.yml
 
 ### Logs ###
