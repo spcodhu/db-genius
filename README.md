@@ -133,7 +133,7 @@ User Prompt
 
 ### Prerequisites
 
-- JDK 22+
+- JDK 21+
 - PostgreSQL 16+
 - DeepSeek API key
 
@@ -163,7 +163,7 @@ java -jar db-genius-web/target/db-genius-web-1.0.0.jar
 
 ### 4. Access
 
-- Application: http://localhost:8080/api
+- Application: http://localhost:8109/api
 - API Docs: see `api-docs.yaml` in project root
 - Default admin: `admin` / `admin123`
 
