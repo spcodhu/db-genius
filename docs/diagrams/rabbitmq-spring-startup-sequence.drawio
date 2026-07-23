@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+<diagram name="启动时序">
+    <mxGraphModel dx="1000" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="760" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="p2title" value="从应用启动到拓扑就绪：你的 Bean 是如何「生效」的" style="text;html=1;fontSize=16;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="60" y="10" width="700" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" value="① 组件扫描与 Bean 注册&#xa;Spring 扫描 @Configuration，逐个调用 @Bean 方法，&#xa;以【方法名】为 Bean 名字注册进容器（本质是一个 Map）。&#xa;dbConfigVerifyQueue 与 dbConfigVerifyDlq 名字不同 → 和平共存" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="60" y="50" width="560" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" value="② 初始化回调（InitializingBean）&#xa;每个 Bean 属性注入完成后，容器检查它是否实现 InitializingBean 接口，&#xa;是则回调它的 afterPropertiesSet() 方法，让 Bean 做收尾初始化" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="60" y="160" width="560" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="③ RabbitAdmin 挂监听&#xa;RabbitAdmin.afterPropertiesSet() 里，把自己作为 ConnectionListener&#xa;登记到 CachingConnectionFactory ——「连接建立时请通知我」" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="60" y="270" width="560" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" value="④ 首次建立连接触发回调&#xa;@RabbitListener 监听容器启动，向 broker 发起 TCP 连接（:5672），&#xa;连接建立瞬间触发 onCreate() 回调 → RabbitAdmin.initialize() 被执行" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="60" y="380" width="560" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="s5" value="⑤ 按类型收集 Declarable Bean&#xa;initialize() 调用 applicationContext.getBeansOfType(Queue/Exchange/Binding)，&#xa;把容器里这 8 个 Bean【不管名字、一次性全部】取出来" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="60" y="490" width="560" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="s6" value="⑥ 逐个 declare，拓扑就绪&#xa;每个 Bean 被翻译成 AMQP 命令（exchange.declare / queue.declare / queue.bind）&#xa;发给 broker。declare 幂等：已存在且参数一致 = 空操作；参数不一致 = 报错。&#xa;之后监听容器开始消费消息" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="60" y="600" width="560" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="a1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s1" target="s2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s2" target="s3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s3" target="s4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s4" target="s5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s5" target="s6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c1" value="概念：broker&#xa;RabbitMQ 服务端进程（本项目里是 docker 容器）。&#xa;类比 MySQL：broker ≈ mysqld；&#xa;Exchange/Queue/Binding ≈ 数据库里的表结构；&#xa;Java 侧的 Bean ≈ DDL 语句的对象化描述。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="720" y="50" width="460" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c2" value="概念：InitializingBean&#xa;Spring Bean 生命周期接口。流程：&#xa;容器创建 Bean → 注入属性 → 回调 afterPropertiesSet() → 就绪。&#xa;作用：让 Bean 在「万事俱备」之后执行初始化动作，&#xa;而不是在构造函数里做（那时依赖还没注入完）。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="720" y="190" width="460" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" value="概念：回调（Callback）&#xa;「好莱坞原则」：Don't call us, we'll call you。&#xa;你把一段逻辑登记给框架，时机到了框架反过来调你。&#xa;好处：不用自己写 while(true) 轮询「连接建好了没」，&#xa;也决定了「谁先谁后」的控制权在框架手里（控制反转）。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="720" y="340" width="460" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="c4" value="概念：ConnectionListener&#xa;Spring AMQP 定义的回调接口：&#xa;onCreate(连接建立) / onClose(连接关闭)。&#xa;RabbitAdmin 靠它在「连接就绪」这一刻才去 declare ——&#xa;因为 declare 命令必须通过连接发给 broker。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="720" y="490" width="460" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c5" value="概念：getBeansOfType（问题 1 的直接答案）&#xa;容器的「按类型批量取货」API：&#xa;不管 Bean 叫什么名字，只要类型匹配就全部返回。&#xa;所以同类型注册多个 Bean 从不冲突，&#xa;RabbitAdmin 也正是靠它把 8 个拓扑 Bean 一网打尽。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="720" y="620" width="460" height="120" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

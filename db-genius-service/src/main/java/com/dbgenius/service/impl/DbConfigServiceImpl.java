@@ -9,13 +9,12 @@ import com.dbgenius.model.dto.DbConfigRequest;
 import com.dbgenius.model.entity.DbConfig;
 import com.dbgenius.model.enums.DbConfigStatus;
 import com.dbgenius.model.vo.DbConfigVO;
+import com.dbgenius.mq.DbConfigVerifyProducer;
 import com.dbgenius.service.DbConfigService;
 import com.dbgenius.trial.TrialGuard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Lazy;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.sql.*;
@@ -32,9 +31,8 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     @org.springframework.beans.factory.annotation.Autowired
     private TrialGuard trialGuard;
 
-    @Lazy
     @org.springframework.beans.factory.annotation.Autowired
-    private DbConfigService self;
+    private DbConfigVerifyProducer dbConfigVerifyProducer;
 
     @Override
     public DbConfigVO createConfig(Long userId, DbConfigRequest request) {
@@ -50,7 +48,7 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
         config.setPasswordEncrypted(AesUtil.encrypt(request.getPassword(), encryptKey));
         config.setStatus(DbConfigStatus.VERIFYING);
         save(config);
-        self.autoVerifyAndGenerateDoc(config.getId());
+        dbConfigVerifyProducer.send(config.getId());
         return toVO(config);
     }
 
@@ -69,7 +67,7 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
         config.setDocContent(null);
         config.setDocGeneratedAt(null);
         updateById(config);
-        self.autoVerifyAndGenerateDoc(config.getId());
+        dbConfigVerifyProducer.send(config.getId());
         return toVO(config);
     }
 
@@ -133,7 +131,6 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
         return AesUtil.decrypt(config.getPasswordEncrypted(), encryptKey);
     }
 
-    @Async("dbGeniusExecutor")
     @Override
     public void autoVerifyAndGenerateDoc(Long configId) {
         log.info("Auto-verifying database config {}", configId);

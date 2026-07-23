@@ -7,7 +7,7 @@ import com.dbgenius.mapper.SysUserMapper;
 import com.dbgenius.model.entity.DbConfig;
 import com.dbgenius.model.entity.SysUser;
 import com.dbgenius.model.enums.DbConfigStatus;
-import com.dbgenius.service.DbConfigService;
+import com.dbgenius.mq.DbConfigVerifyProducer;
 import com.dbgenius.trial.TrialProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,7 +30,7 @@ public class TrialDataInitializer implements CommandLineRunner {
     private final TrialProperties trialProperties;
     private final SysUserMapper sysUserMapper;
     private final DbConfigMapper dbConfigMapper;
-    private final DbConfigService dbConfigService;
+    private final DbConfigVerifyProducer dbConfigVerifyProducer;
 
     @Value("${db-genius.encrypt-key}")
     private String encryptKey;
@@ -72,7 +72,7 @@ public class TrialDataInitializer implements CommandLineRunner {
         dbConfigMapper.insert(config);
         log.info("Trial built-in database config created for admin user, configId={}", config.getId());
 
-        dbConfigService.autoVerifyAndGenerateDoc(config.getId());
+        dbConfigVerifyProducer.send(config.getId());
     }
 
     private boolean hasRequiredConnectionInfo() {

@@ -73,6 +73,7 @@ DB-Genius is an AI-powered database management tool that transforms natural lang
 | Auth | Sa-Token 1.39.0 |
 | API Docs | OpenAPI 3 YAML (`api-docs.yaml`) |
 | System DB | PostgreSQL 16 |
+| Message Queue | RabbitMQ 3.13 (async db-config verify & doc generation) |
 | Excel | EasyExcel 4.0.3 |
 | Encryption | AES-256-GCM |
 | Logging | SLF4J + MDC (taskId tracing) |
@@ -135,6 +136,7 @@ User Prompt
 
 - JDK 21+
 - PostgreSQL 16+
+- RabbitMQ 3.13+ (started via `docker compose up -d`)
 - DeepSeek API key
 
 ### 1. Start PostgreSQL
@@ -277,6 +279,10 @@ All SSE events follow this JSON format:
 | `DEEPSEEK_API_KEY` | DeepSeek API key | Yes |
 | `DB_GENIUS_ENCRYPT_KEY` | AES-256 encryption key (32 chars) | Yes |
 | `DB_GENIUS_FILE_DIR` | File upload directory | No |
+| `SPRING_RABBITMQ_HOST` | RabbitMQ host | No (default `localhost`) |
+| `SPRING_RABBITMQ_PORT` | RabbitMQ port | No (default `5672`) |
+| `SPRING_RABBITMQ_USERNAME` | RabbitMQ username | No (default `guest`) |
+| `SPRING_RABBITMQ_PASSWORD` | RabbitMQ password | No (default `guest`) |
 
 ## Design Patterns
 

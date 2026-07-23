@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+<diagram name="概念总览">
+    <mxGraphModel dx="1000" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="760" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="spring" value="Spring 容器（ApplicationContext，你的 JVM 进程内）" style="swimlane;startSize=30;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="560" height="620" as="geometry" />
+        </mxCell>
+        <mxCell id="note1" value="Bean 的唯一标识是【名字】——同类型可以注册任意多个，互不冲突" style="text;html=1;fontSize=12;fontColor=#b85450;align=left;verticalAlign=middle;" vertex="1" parent="spring">
+          <mxGeometry x="20" y="34" width="520" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="producer" value="DbConfigVerifyProducer&#xa;@Component（生产者）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="spring">
+          <mxGeometry x="30" y="80" width="230" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="consumer" value="DbConfigVerifyConsumer&#xa;@RabbitListener（消费者）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="spring">
+          <mxGeometry x="30" y="150" width="230" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="declGroup" value="你在 RabbitMqConfig 声明的 Declarable Bean（8 个）" style="swimlane;startSize=26;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="spring">
+          <mxGeometry x="30" y="230" width="240" height="340" as="geometry" />
+        </mxCell>
+        <mxCell id="q1" value="Queue  dbConfigVerifyQueue" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=6;" vertex="1" parent="declGroup">
+          <mxGeometry x="15" y="40" width="210" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="q2" value="Queue  dbConfigVerifyDlq" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=6;" vertex="1" parent="declGroup">
+          <mxGeometry x="15" y="90" width="210" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="Exchange  dbConfigExchange" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=6;" vertex="1" parent="declGroup">
+          <mxGeometry x="15" y="140" width="210" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="Exchange  dbConfigDlx" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=6;" vertex="1" parent="declGroup">
+          <mxGeometry x="15" y="190" width="210" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b1" value="Binding  dbConfigVerifyBinding" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=6;" vertex="1" parent="declGroup">
+          <mxGeometry x="15" y="240" width="210" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b2" value="Binding  dbConfigVerifyDlqBinding" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=6;" vertex="1" parent="declGroup">
+          <mxGeometry x="15" y="290" width="210" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="admin" value="RabbitAdmin&#xa;（Spring Boot 默认提供）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="spring">
+          <mxGeometry x="300" y="300" width="230" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="connfac" value="CachingConnectionFactory&#xa;（Spring Boot 默认提供）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="spring">
+          <mxGeometry x="300" y="380" width="230" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="broker" value="RabbitMQ Broker（独立的 Erlang 进程 / Docker 容器）" style="swimlane;startSize=30;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="720" y="40" width="520" height="620" as="geometry" />
+        </mxCell>
+        <mxCell id="bx" value="Exchange&#xa;dbgenius.dbconfig.exchange" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="broker">
+          <mxGeometry x="40" y="80" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="bq" value="Queue&#xa;dbgenius.dbconfig.verify" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="broker">
+          <mxGeometry x="280" y="80" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="bdlx" value="DLX&#xa;dbgenius.dbconfig.dlx" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="broker">
+          <mxGeometry x="40" y="340" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="bdlq" value="DLQ&#xa;dbgenius.dbconfig.verify.dlq" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="broker">
+          <mxGeometry x="280" y="340" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="note2" value="broker 是 RabbitMQ 服务端进程本身。&#xa;Exchange / Queue / Binding 是 broker 内部维护&#xa;的数据结构，不是 Java 对象。&#xa;&#xa;Java 侧的 Queue/Exchange/Binding Bean 只是&#xa;「我要它存在」的声明描述（类似 DDL）。" style="text;html=1;fontSize=12;fontColor=#666666;align=left;verticalAlign=top;" vertex="1" parent="broker">
+          <mxGeometry x="30" y="440" width="420" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_prod" value="convertAndSend()" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=11;" edge="1" parent="1" source="producer" target="bx">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_cons" value="订阅并消费" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="consumer" target="bq">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="640" y="255" />
+              <mxPoint x="1100" y="255" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_bind1" value="Binding: dbconfig.verify" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="bx" target="bq">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_bind2" value="Binding: dbconfig.verify.dlq" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="bdlx" target="bdlq">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_dead" value="死信转发（x-dead-letter-exchange）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#b85450;fontColor=#b85450;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="bq" target="bdlx">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1100" y="270" />
+              <mxPoint x="860" y="270" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_admin" value="收集全部 Declarable Bean → 逐个 declare（幂等）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.36;entryDx=0;entryDy=0;fontSize=11;fontStyle=1;" edge="1" parent="1" source="admin" target="broker">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_conn" value="AMQP over TCP :5672" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=11;" edge="1" parent="1" source="connfac" target="broker">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
