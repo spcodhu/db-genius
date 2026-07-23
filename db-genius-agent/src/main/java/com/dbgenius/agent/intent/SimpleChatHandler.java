@@ -37,6 +37,39 @@ public class SimpleChatHandler implements IntentHandler {
         return IntentType.SIMPLE_CHAT;
     }
 
+    /**
+     * 处理简单会话：以 SSE 流式方式把大模型回复逐段推给前端，并落库保存对话。
+     *
+     * <p>核心是 chatClient 的流式调用链，各环节含义如下：
+     * <ul>
+     *   <li>{@code prompt()} —— 开启一次请求构建（fluent API 的入口）。</li>
+     *   <li>{@code user(...)} —— 设置本轮用户消息内容。</li>
+     *   <li>{@code stream()} —— 声明使用流式响应，返回值基于 Reactor，
+     *       模型会边生成边推送，而非等全部生成完再一次性返回。</li>
+     *   <li>{@code content()} —— 从流式响应中只提取纯文本片段，得到一个
+     *       {@code Flux<String>}（token 流），忽略元数据。</li>
+     *   <li>{@code subscribe(onNext, onError, onComplete)} —— 订阅该流，真正触发调用；
+     *       三个回调分别处理：收到每段 token、发生错误、流正常结束。
+     *       返回 {@link reactor.core.Disposable}，用于在需要时取消订阅、释放底层连接。</li>
+     * </ul>
+     *
+     * <p>处理流程：
+     * <ol>
+     *   <li>每收到一个 token：累加到 {@code fullContent} 并通过 SSE 推送 {@code content} 事件。</li>
+     *   <li>出错：推送 error 事件并结束 emitter。</li>
+     *   <li>完成：把完整回复作为 assistant 消息落库，推送 done 事件并结束 emitter。</li>
+     * </ol>
+     *
+     * <p>最后的 {@code emitter.onCompletion/onTimeout/onError} 是 SSE 连接的生命周期回调：
+     * 无论正常结束、超时还是异常，都调用 {@code disposable.dispose()} 取消上游订阅，
+     * 避免客户端断开后模型流仍在后台空转造成资源泄漏。
+     *
+     * @param emitter        SSE 发射器，用于向前端持续推送事件
+     * @param taskId         本次任务标识，随每个 SSE 事件下发
+     * @param request        统一聊天请求（含消息、会话 ID 等）
+     * @param classification 意图分类结果（此处已确定为 SIMPLE_CHAT）
+     * @param userId         当前用户 ID，用于会话归属校验
+     */
     @Override
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
                        IntentClassificationResult classification, Long userId) {
@@ -67,9 +100,13 @@ public class SimpleChatHandler implements IntentHandler {
                         }
                 );
 
+        // 类似于 finally ，在流结束之后取消之前的订阅
         emitter.onCompletion(disposable::dispose);
         emitter.onTimeout(disposable::dispose);
-        emitter.onError(e -> disposable.dispose());
+        emitter.onError(e -> {
+            log.error("[SimpleChatHandler] SSE emitter error", e);
+            disposable.dispose();
+        });
     }
 
     private ConversationVO getOrCreateConversation(Long userId, UnifiedChatRequest request) {
