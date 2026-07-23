@@ -1,20 +1,28 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: db_genius
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+  app:
+    build: .
     ports:
-      - "5432:5432"
+      - "${SERVER_PORT:-8109}:8109"
+    environment:
+      # PostgreSQL 为远程独立部署，通过 .env 指定完整 JDBC 地址
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+      # RabbitMQ 与 app 同在 compose 网络，用服务名互连（不是 localhost）
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${SPRING_RABBITMQ_USERNAME:-guest}
+      SPRING_RABBITMQ_PASSWORD: ${SPRING_RABBITMQ_PASSWORD:-guest}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DB_GENIUS_ENCRYPT_KEY: ${DB_GENIUS_ENCRYPT_KEY}
+      DB_GENIUS_FILE_DIR: /app/uploads
+      DB_GENIUS_TRIAL_ENABLED: ${DB_GENIUS_TRIAL_ENABLED:-false}
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./db-genius-web/src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - uploads:/app/uploads
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
 
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
@@ -30,5 +38,5 @@ services:
       retries: 5
 
 volumes:
-  pgdata:
   rabbitmqdata:
+  uploads:
