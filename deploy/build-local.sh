@@ -8,8 +8,14 @@
 #   - 外部 PostgreSQL 已部署并可用
 #   - 本脚本同目录下已放置 .env 文件（从 .env.example 复制并填写真实值）
 #
-# 必填环境变量：
-#   GIT_REPO          SSH 格式的 Git 仓库地址，例如 git@gitee.com:xxx/db-genius.git
+# 部署配置（写到 deploy/.env 中）：
+#   GIT_REPO          SSH/HTTPS 格式的 Git 仓库地址，例如 git@gitee.com:xxx/db-genius.git
+#                     设置此变量时，脚本会从仓库拉取 DEPLOY_BRANCH 分支到临时目录构建。
+#                     不设置时，使用本地代码构建。
+#   DEPLOY_BRANCH     要部署的 Git 分支，默认 main（仅当设置了 GIT_REPO 时生效）。
+#
+#   PROJECT_DIR       本地项目根目录（未设置 GIT_REPO 时使用）。
+#                     默认自动推断：脚本在 deploy/ 下则取上级目录，否则取脚本所在目录。
 #
 # 可选环境变量：
 #   DEPLOY_HOME       部署根目录，默认 /opt/db-genius
@@ -18,7 +24,13 @@
 #   MVN_OPTS          Maven 额外参数
 #
 # 用法：
-#   sudo GIT_REPO=git@gitee.com:xxx/db-genius.git ./deploy/build-local.sh
+#   1) 从 Git 仓库部署（需先在 deploy/.env 中配置 GIT_REPO 和 DEPLOY_BRANCH）：
+#      sudo ./deploy/build-local.sh
+#
+#   2) 直接使用服务器本地代码部署（不配置 GIT_REPO 即可）：
+#      sudo ./deploy/build-local.sh
+#      或显式指定源码目录：
+#      sudo PROJECT_DIR=/path/to/db-genius ./deploy/build-local.sh
 ###############################################################################
 
 set -euo pipefail
@@ -30,6 +42,14 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 推断本地项目根目录：脚本在 deploy/ 下则取上级目录，否则取脚本所在目录
+if [ "$(basename "${SCRIPT_DIR}")" = "deploy" ]; then
+    DEFAULT_PROJECT_DIR=$(dirname "${SCRIPT_DIR}")
+else
+    DEFAULT_PROJECT_DIR="${SCRIPT_DIR}"
+fi
+PROJECT_DIR="${PROJECT_DIR:-${DEFAULT_PROJECT_DIR}}"
 
 APP_NAME="db-genius"
 APP_VERSION="1.0.0"
@@ -55,15 +75,15 @@ cleanup() {
 trap cleanup EXIT
 
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    echo -e "${BLUE}[INFO]${NC} $1" >&2
 }
 
 log_ok() {
-    echo -e "${GREEN}[OK]${NC} $1"
+    echo -e "${GREEN}[OK]${NC} $1" >&2
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
+    echo -e "${YELLOW}[WARN]${NC} $1" >&2
 }
 
 log_err() {
@@ -145,25 +165,47 @@ check_java() {
 build_jar() {
     log_info "拉取代码并构建..."
 
-    local build_dir
-    build_dir=$(mktemp -d)
+    local build_dir=""
+    local is_temp=false
 
-    git clone --depth 1 "${GIT_REPO}" "${build_dir}"
+    if [ -n "${GIT_REPO:-}" ]; then
+        build_dir=$(mktemp -d)
+        is_temp=true
+        git clone --depth 1 --branch "${DEPLOY_BRANCH:-main}" "${GIT_REPO}" "${build_dir}" >&2
+    else
+        build_dir="${PROJECT_DIR}"
+        if [ ! -f "${build_dir}/pom.xml" ]; then
+            log_err "本地目录 ${build_dir} 不是 Maven 项目根目录（未找到 pom.xml）"
+            exit 1
+        fi
+        log_info "使用本地代码构建: ${build_dir}"
+    fi
+
     cd "${build_dir}"
+
+    if [ -d ".git" ]; then
+        local commit_msg
+        commit_msg=$(git log -1 --pretty=format:"%h %s" 2>/dev/null || true)
+        if [ -n "${commit_msg}" ]; then
+            log_info "部署分支最新提交: ${commit_msg}"
+        fi
+    fi
 
     local settings_arg=""
     if [ -f "${SCRIPT_DIR}/settings.xml" ]; then
         settings_arg="-s ${SCRIPT_DIR}/settings.xml"
     fi
 
-    mvn ${settings_arg} clean package ${MVN_OPTS:-} -DskipTests
+    mvn ${settings_arg} clean package ${MVN_OPTS:-} -DskipTests >&2
 
     local jar_path
     jar_path=$(find "${build_dir}" -name "db-genius-web-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" -type f | head -n 1)
 
     if [ -z "${jar_path}" ] || [ ! -f "${jar_path}" ]; then
         log_err "未找到构建生成的 JAR 文件"
-        rm -rf "${build_dir}"
+        if [ "${is_temp}" = true ]; then
+            rm -rf "${build_dir}"
+        fi
         exit 1
     fi
 
@@ -246,26 +288,45 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-if [ -z "${GIT_REPO:-}" ]; then
-    log_err "环境变量 GIT_REPO 未设置"
+log_info "开始检查运行环境..."
+check_commands
+check_java
+log_ok "运行环境检查通过"
+
+log_info "开始准备认证与配置..."
+prepare_ssh
+check_env_file
+log_ok "认证与配置准备完成"
+
+# .env 已加载，重新校验部署来源
+if [ -z "${GIT_REPO:-}" ] && [ ! -f "${PROJECT_DIR}/pom.xml" ]; then
+    log_err "未设置 GIT_REPO，且本地目录 ${PROJECT_DIR} 不是 Maven 项目根目录"
     exit 1
 fi
 
 echo ""
 echo -e "${GREEN}DB-Genius 裸机部署${NC}"
-echo "  Git: ${GIT_REPO}"
+if [ -n "${GIT_REPO:-}" ]; then
+    echo "  Git: ${GIT_REPO}"
+    echo "  分支: ${DEPLOY_BRANCH:-main}"
+else
+    echo "  本地源码: ${PROJECT_DIR}"
+fi
 echo "  部署目录: ${DEPLOY_HOME}"
 echo ""
 
-check_commands
-check_java
-prepare_ssh
-check_env_file
-
+log_info "开始构建应用..."
 jar_path=$(build_jar)
+log_ok "应用构建完成: ${jar_path}"
+
+log_info "开始部署应用..."
 stop_service
 deploy_jar "${jar_path}"
+log_ok "应用部署完成"
+
+log_info "开始启动服务..."
 start_service
+log_ok "服务启动完成"
 
 echo ""
 log_ok "部署完成"
