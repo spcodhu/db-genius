@@ -250,7 +250,7 @@ All SSE events follow this JSON format:
 {
   "taskId": "uuid",
   "step": 1,
-  "type": "classifying | classified | clarify | routing | thinking | content | sql | result | error | file_parsed | step | summary | done",
+  "type": "classifying | classified | clarify | routing | thinking | reasoning | content | sql | result | error | file_parsed | step | summary | done",
   "content": "...",
   "timestamp": 1719648000000
 }
@@ -263,6 +263,7 @@ All SSE events follow this JSON format:
 | `clarify` | Low confidence / missing prerequisite, ask user to confirm |
 | `routing` | Routing to the selected handler |
 | `thinking` | Agent is analyzing the request |
+| `reasoning` | LLM reasoning content (thinking mode); streaming deltas for simple chat, one complete block per step for agents |
 | `content` | Streaming text token for simple chat |
 | `step` | Tool execution result |
 | `summary` | Final Markdown summary |

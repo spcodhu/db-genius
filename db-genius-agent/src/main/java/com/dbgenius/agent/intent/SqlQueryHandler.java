@@ -27,7 +27,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class SqlQueryHandler implements IntentHandler {
 
-    private final ChatClient chatClient;
+    private final ChatClient agentChatClient;
     private final DbConfigService dbConfigService;
     private final ConversationService conversationService;
     private final SqlExecuteTool sqlExecuteTool;
@@ -52,7 +52,7 @@ public class SqlQueryHandler implements IntentHandler {
         ConversationVO conversation = getOrCreateConversation(userId, request, dbConfigIds);
         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
-        DbSqlAgent agent = new DbSqlAgent(chatClient, sqlExecuteTool, terminateTool, dbDoc);
+        DbSqlAgent agent = new DbSqlAgent(agentChatClient, sqlExecuteTool, terminateTool, dbDoc);
         agent.setSummaryCallback(markdown ->
                 conversationService.saveMessage(conversation.getId(), "assistant", markdown, -1, "summary"));
         agent.runStream(request.getMessage(), taskId, emitter);

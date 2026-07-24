@@ -30,7 +30,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class WorkflowHandler implements IntentHandler {
 
-    private final ChatClient chatClient;
+    private final ChatClient agentChatClient;
     private final DbConfigService dbConfigService;
     private final ConversationService conversationService;
     private final FileUploadService fileUploadService;
@@ -69,7 +69,7 @@ public class WorkflowHandler implements IntentHandler {
         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
         DbWorkflowAgent agent = new DbWorkflowAgent(
-                chatClient, sqlExecuteTool, excelParseTool, terminateTool, dbDoc, hasFiles);
+                agentChatClient, sqlExecuteTool, excelParseTool, terminateTool, dbDoc, hasFiles);
         agent.setSummaryCallback(markdown ->
                 conversationService.saveMessage(conversation.getId(), "assistant", markdown, -1, "summary"));
         agent.runStream(enhancedMessage, taskId, emitter);

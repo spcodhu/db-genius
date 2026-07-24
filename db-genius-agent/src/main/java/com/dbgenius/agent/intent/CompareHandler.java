@@ -30,7 +30,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class CompareHandler implements IntentHandler {
 
-    private final ChatClient chatClient;
+    private final ChatClient agentChatClient;
     private final DbConfigService dbConfigService;
     private final ConversationService conversationService;
     private final DbCompareTool dbCompareTool;
@@ -72,7 +72,7 @@ public class CompareHandler implements IntentHandler {
         conversationService.saveMessage(conversation.getId(), "user", message, null, "user");
 
         DbCompareAgent agent = new DbCompareAgent(
-                chatClient, dbCompareTool, sqlExecuteTool, terminateTool, preDbDoc, testDbDoc);
+                agentChatClient, dbCompareTool, sqlExecuteTool, terminateTool, preDbDoc, testDbDoc);
         agent.setSummaryCallback(markdown ->
                 conversationService.saveMessage(conversation.getId(), "assistant", markdown, -1, "summary"));
         agent.runStream(message, taskId, emitter);

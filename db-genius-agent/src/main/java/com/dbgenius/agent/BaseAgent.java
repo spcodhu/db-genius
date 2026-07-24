@@ -28,6 +28,8 @@ public abstract class BaseAgent {
     protected List<org.springframework.ai.chat.messages.Message> messageList;
     protected String taskId;
     protected Consumer<String> summaryCallback;
+    /** 当前运行的 SSE 发射器，供 step 循环内部（如 think()）推送事件。 */
+    protected SseEmitter emitter;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -59,6 +61,7 @@ public abstract class BaseAgent {
         }
 
         this.taskId = taskId;
+        this.emitter = emitter;
         MDC.put("taskId", taskId);
 
         emitter.onTimeout(() -> {

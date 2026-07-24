@@ -82,6 +82,13 @@ public class ToolCallAgent extends ReActAgent {
         String result = assistantMessage.getText();
         log.info("[{}] thinking: {}", name, result);
 
+        // thinking 模式的推理内容：作为 reasoning 事件推给前端，并随消息入列表
+        // （后续轮次由 ReasoningChatModel 回传给 DeepSeek，否则 API 返回 400）
+        Object reasoningContent = assistantMessage.getMetadata().get(ReasoningChatModel.REASONING_CONTENT_KEY);
+        if (reasoningContent instanceof String reasoning && !reasoning.isBlank()) {
+            sendEvent(emitter, SseEvent.of(taskId, currentStep, "reasoning", reasoning));
+        }
+
         if (toolCalls == null || toolCalls.isEmpty()) {
             messageList.add(assistantMessage);
             return false;

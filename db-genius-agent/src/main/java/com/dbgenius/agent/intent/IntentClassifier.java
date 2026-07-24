@@ -7,9 +7,11 @@ import com.dbgenius.model.vo.IntentClassificationResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 基于 LLM 的意图分类器
@@ -36,6 +38,11 @@ public class IntentClassifier {
         return chatClient.prompt()
                 .system(systemPrompt)
                 .user(userPrompt)
+                // 意图分类是每次对话的前置内部调用，thinking 模式只会增加延迟，
+                // 逐调用关闭（runtime extraBody 覆盖默认配置）
+                .options(OpenAiChatOptions.builder()
+                        .extraBody(Map.of("thinking", Map.of("type", "disabled")))
+                        .build())
                 .call()
                 .entity(IntentClassificationResult.class);
     }

@@ -33,8 +33,9 @@ spring:
       base-url: https://api.deepseek.com
       chat:
         options:
-          model: deepseek-chat
-          temperature: 0.7
+          # DeepSeek V4 默认开启 thinking 模式（temperature 等采样参数在该模式下无效）。
+          # tool call 轮次的 reasoning_content 回传由 ReasoningChatModel 处理。
+          model: deepseek-v4-pro
 
 mybatis-plus:
   type-enums-package: com.dbgenius.model.enums

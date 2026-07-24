@@ -1,5 +1,6 @@
 package com.dbgenius.agent.intent;
 
+import com.dbgenius.agent.ReasoningChatModel;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.enums.IntentType;
@@ -46,8 +47,8 @@ public class SimpleChatHandler implements IntentHandler {
      *   <li>{@code user(...)} —— 设置本轮用户消息内容。</li>
      *   <li>{@code stream()} —— 声明使用流式响应，返回值基于 Reactor，
      *       模型会边生成边推送，而非等全部生成完再一次性返回。</li>
-     *   <li>{@code content()} —— 从流式响应中只提取纯文本片段，得到一个
-     *       {@code Flux<String>}（token 流），忽略元数据。</li>
+     *   <li>{@code chatResponse()} —— 获取完整的流式响应（含元数据），用于同时提取
+     *       正文 token 与 thinking 模式的推理增量（{@code reasoningContent}）。</li>
      *   <li>{@code subscribe(onNext, onError, onComplete)} —— 订阅该流，真正触发调用；
      *       三个回调分别处理：收到每段 token、发生错误、流正常结束。
      *       返回 {@link reactor.core.Disposable}，用于在需要时取消订阅、释放底层连接。</li>
@@ -55,7 +56,8 @@ public class SimpleChatHandler implements IntentHandler {
      *
      * <p>处理流程：
      * <ol>
-     *   <li>每收到一个 token：累加到 {@code fullContent} 并通过 SSE 推送 {@code content} 事件。</li>
+     *   <li>每收到一个 chunk：推理增量推送 {@code reasoning} 事件；正文 token 累加到
+     *       {@code fullContent} 并推送 {@code content} 事件。</li>
      *   <li>出错：推送 error 事件并结束 emitter。</li>
      *   <li>完成：把完整回复作为 assistant 消息落库，推送 done 事件并结束 emitter。</li>
      * </ol>
@@ -81,11 +83,24 @@ public class SimpleChatHandler implements IntentHandler {
         Disposable disposable = chatClient.prompt()
                 .user(request.getMessage())
                 .stream()
-                .content()
+                .chatResponse()
                 .subscribe(
-                        token -> {
-                            fullContent.append(token);
-                            sendEvent(emitter, SseEvent.of(taskId, 0, "content", token));
+                        chatResponse -> {
+                            if (chatResponse.getResult() == null) {
+                                return;
+                            }
+                            var output = chatResponse.getResult().getOutput();
+                            // thinking 模式的推理增量，与正文分通道推送
+                            Object reasoning = output.getMetadata()
+                                    .get(ReasoningChatModel.REASONING_CONTENT_KEY);
+                            if (reasoning instanceof String reasoningDelta && !reasoningDelta.isEmpty()) {
+                                sendEvent(emitter, SseEvent.of(taskId, 0, "reasoning", reasoningDelta));
+                            }
+                            String token = output.getText();
+                            if (token != null && !token.isEmpty()) {
+                                fullContent.append(token);
+                                sendEvent(emitter, SseEvent.of(taskId, 0, "content", token));
+                            }
                         },
                         error -> {
                             log.error("[SimpleChatHandler] Stream error", error);
