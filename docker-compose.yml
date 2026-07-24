@@ -1,3 +1,5 @@
+name: db-genius
+
 services:
   app:
     build: .
