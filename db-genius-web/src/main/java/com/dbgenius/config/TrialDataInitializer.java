@@ -7,6 +7,7 @@ import com.dbgenius.mapper.SysUserMapper;
 import com.dbgenius.model.entity.DbConfig;
 import com.dbgenius.model.entity.SysUser;
 import com.dbgenius.model.enums.DbConfigStatus;
+import com.dbgenius.model.enums.DbType;
 import com.dbgenius.mq.DbConfigVerifyProducer;
 import com.dbgenius.trial.TrialProperties;
 import lombok.RequiredArgsConstructor;
@@ -60,7 +61,7 @@ public class TrialDataInitializer implements CommandLineRunner {
         DbConfig config = new DbConfig();
         config.setUserId(admin.getId());
         config.setName(trialProperties.getBuiltinDbName());
-        config.setDbType("mysql");
+        config.setDbType(DbType.MYSQL.getCode());
         config.setHost(trialProperties.getBuiltinHost());
         config.setPort(trialProperties.getBuiltinPort());
         config.setDbName(trialProperties.getBuiltinDbName());

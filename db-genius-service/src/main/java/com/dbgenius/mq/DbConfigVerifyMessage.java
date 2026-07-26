@@ -63,6 +63,19 @@ import java.io.Serializable;
  * }</pre>
  *
  * @param configId 需要校验并生成文档的数据库配置 ID
+ * @param action   动作类型（见 {@link DbConfigMqConstants} 中的 ACTION_* 常量）：
+ *                 {@code VERIFY_AND_DOC} 表示配置创建/更新后的「验证连接 + 生成文档」；
+ *                 {@code REFRESH_DOC} 表示数据库变更后手动触发的「重新验证 + 刷新文档」。
+ *                 两种动作的消费逻辑一致，仅用于日志与语义区分
  */
-public record DbConfigVerifyMessage(Long configId) implements Serializable {
+public record DbConfigVerifyMessage(Long configId, String action) implements Serializable {
+
+    /**
+     * 辅助构造器：仅传配置 ID，动作缺省为 {@code VERIFY_AND_DOC}（兼容旧调用点）。
+     *
+     * @param configId 需要校验并生成文档的数据库配置 ID
+     */
+    public DbConfigVerifyMessage(Long configId) {
+        this(configId, DbConfigMqConstants.ACTION_VERIFY_AND_DOC);
+    }
 }

@@ -225,6 +225,41 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /db-config/{id}/refresh-doc:
+    post:
+      tags: [数据库配置]
+      summary: 手动刷新数据库文档（异步）
+      description: |
+        数据库结构变更后调用，重新验证连接并重新生成数据库文档（Markdown）。
+
+        本接口为**异步受理**：立即返回提示文案，配置 status 转为 0（正在验证），
+        后台通过消息队列执行「重新验证连接 + 重新生成文档」，
+        前端可轮询 `GET /db-config/{id}` 查看 status 与 docGeneratedAt 获取最新结果。
+
+        与 `POST /db-config/{id}/generate-doc`（同步生成并返回文档内容）不同，
+        本接口不返回文档内容，只受理任务。
+
+        错误码：
+        - `404`：配置不存在或不属于当前用户
+        - `403`：试用版下禁止对内置测试库执行刷新
+
+        **试用版限制：** 试用版下禁止刷新内置测试库文档，直接返回 `403`。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: 刷新任务已受理
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_String'
+              example:
+                code: 200
+                message: success
+                data: 文档刷新任务已受理，正在后台重新验证连接并生成文档
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /db-config/{id}/doc:
     get:
       tags: [数据库配置]
@@ -267,7 +302,8 @@ paths:
         - `simple_chat`：简单会话问答，不需要数据库
         - `sql_query`：SQL 对话查询，需要提供 `dbConfigIds`
         - `workflow`：复杂工作流，需要提供 `dbConfigIds`，可附加 `fileIds`
-        - `db_compare`：数据库对比，需要提供 `preDbConfigId` 和 `testDbConfigId`
+        - `db_compare`：数据库对比，需要提供 `preDbConfigId` 和 `testDbConfigId`；
+          支持四种类型（mysql/postgresql/sqlite/mongodb）任意两两对比，含跨类型对比（如 MySQL vs PostgreSQL），基于中性元数据模型 diff
 
         **试用版限制：**
         - `sql_query` 仅支持只读查询（`SELECT/SHOW/DESC/EXPLAIN`），`INSERT/UPDATE/DELETE/DDL` 会被拒绝。
@@ -743,7 +779,7 @@ components:
 
     DbConfigRequest:
       type: object
-      required: [name, host, port, dbName, username, password]
+      required: [name, dbName]
       properties:
         name:
           type: string
@@ -752,21 +788,32 @@ components:
         dbType:
           type: string
           default: mysql
-          enum: [mysql]
+          enum: [mysql, postgresql, sqlite, mongodb]
+          description: |
+            目标数据库类型，缺省为 `mysql`。各类型必填项不同（DTO 层不做固定校验，
+            由服务端按类型校验，不满足返回 `400`）：
+            - `mysql` / `postgresql`：必填 host、port、dbName、username、password
+            - `sqlite`：仅需 dbName（即数据库文件路径，无 host/port/账密概念）
+            - `mongodb`：必填 host、port、dbName；username、password 可空（支持无认证部署）
         host:
           type: string
+          description: 数据库主机（sqlite 类型不需要）
           example: 192.168.1.100
         port:
           type: integer
+          description: 数据库端口（sqlite 类型不需要）
           example: 3306
         dbName:
           type: string
+          description: 数据库名；sqlite 类型为数据库文件路径（如 /data/app.db）
           example: my_database
         username:
           type: string
+          description: 登录用户名（mysql/postgresql 必填；mongodb 可空；sqlite 不需要）
           example: root
         password:
           type: string
+          description: 登录密码（mysql/postgresql 必填；mongodb 可空；sqlite 不需要）
           example: my_password
 
     UnifiedChatRequest:
@@ -842,6 +889,7 @@ components:
           example: 生产环境-主库
         dbType:
           type: string
+          description: 数据库类型（mysql / postgresql / sqlite / mongodb）
           example: mysql
         host:
           type: string

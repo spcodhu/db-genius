@@ -19,7 +19,10 @@ public class DbConfigVerifyConsumer {
      */
     @RabbitListener(queues = DbConfigMqConstants.QUEUE_VERIFY)
     public void onMessage(DbConfigVerifyMessage message) {
-        log.info("Received db-config verify message, configId={}", message.configId());
+        // 兼容旧消息（action 为 null）：一律按 VERIFY_AND_DOC 处理
+        String action = message.action() != null ? message.action() : DbConfigMqConstants.ACTION_VERIFY_AND_DOC;
+        log.info("Received db-config verify message, configId={}, action={}", message.configId(), action);
+        // 两种动作的消费逻辑一致：autoVerifyAndGenerateDoc 本身即「重新验证连接 + 重新生成文档」
         dbConfigService.autoVerifyAndGenerateDoc(message.configId());
     }
 }

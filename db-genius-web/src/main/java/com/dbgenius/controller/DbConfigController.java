@@ -56,6 +56,18 @@ public class DbConfigController {
         return R.ok(dbConfigService.generateDoc(StpUtil.getLoginIdAsLong(), id));
     }
 
+    /**
+     * 手动刷新数据库文档（异步受理，立即返回）。
+     *
+     * <p>数据库结构变更后调用：服务端先校验归属与试用限制，再通过 MQ 异步
+     * 「重新验证连接 + 重新生成文档」，可通过 GET /db-config/{id} 轮询状态。</p>
+     */
+    @PostMapping("/{id}/refresh-doc")
+    public R<String> refreshDoc(@PathVariable Long id) {
+        dbConfigService.refreshDoc(StpUtil.getLoginIdAsLong(), id);
+        return R.ok("文档刷新任务已受理，正在后台重新验证连接并生成文档");
+    }
+
     @GetMapping("/{id}/doc")
     public R<String> getDoc(@PathVariable Long id) {
         Long userId = StpUtil.getLoginIdAsLong();

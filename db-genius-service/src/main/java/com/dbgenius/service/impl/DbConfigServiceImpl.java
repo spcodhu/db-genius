@@ -8,16 +8,19 @@ import com.dbgenius.mapper.DbConfigMapper;
 import com.dbgenius.model.dto.DbConfigRequest;
 import com.dbgenius.model.entity.DbConfig;
 import com.dbgenius.model.enums.DbConfigStatus;
+import com.dbgenius.model.enums.DbType;
 import com.dbgenius.model.vo.DbConfigVO;
+import com.dbgenius.mq.DbConfigMqConstants;
 import com.dbgenius.mq.DbConfigVerifyProducer;
 import com.dbgenius.service.DbConfigService;
+import com.dbgenius.service.database.DatabaseAdapterRegistry;
+import com.dbgenius.service.database.DatabaseDocRenderer;
 import com.dbgenius.trial.TrialGuard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -34,18 +37,24 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     @org.springframework.beans.factory.annotation.Autowired
     private DbConfigVerifyProducer dbConfigVerifyProducer;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private DatabaseAdapterRegistry databaseAdapterRegistry;
+
     @Override
     public DbConfigVO createConfig(Long userId, DbConfigRequest request) {
         trialGuard.denyIfTrial("试用版暂不支持新增数据库配置");
+        // 归一化数据库类型（null/空白回退 mysql，不识别直接 400），具体必填项由适配器按类型校验
+        DbType type = DbType.fromCode(request.getDbType());
+        databaseAdapterRegistry.getAdapter(type).validateRequest(request);
         DbConfig config = new DbConfig();
         config.setUserId(userId);
         config.setName(request.getName());
-        config.setDbType(request.getDbType() != null ? request.getDbType() : "mysql");
+        config.setDbType(type.getCode());
         config.setHost(request.getHost());
         config.setPort(request.getPort());
         config.setDbName(request.getDbName());
         config.setUsername(request.getUsername());
-        config.setPasswordEncrypted(AesUtil.encrypt(request.getPassword(), encryptKey));
+        config.setPasswordEncrypted(encryptPasswordIfPresent(request.getPassword()));
         config.setStatus(DbConfigStatus.VERIFYING);
         save(config);
         dbConfigVerifyProducer.send(config.getId());
@@ -56,13 +65,16 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     public DbConfigVO updateConfig(Long userId, Long configId, DbConfigRequest request) {
         DbConfig config = getConfigEntity(userId, configId);
         trialGuard.denyIfTrialBuiltin(config);
+        // 归一化数据库类型，具体必填项由适配器按类型校验
+        DbType type = DbType.fromCode(request.getDbType());
+        databaseAdapterRegistry.getAdapter(type).validateRequest(request);
         config.setName(request.getName());
-        config.setDbType(request.getDbType() != null ? request.getDbType() : "mysql");
+        config.setDbType(type.getCode());
         config.setHost(request.getHost());
         config.setPort(request.getPort());
         config.setDbName(request.getDbName());
         config.setUsername(request.getUsername());
-        config.setPasswordEncrypted(AesUtil.encrypt(request.getPassword(), encryptKey));
+        config.setPasswordEncrypted(encryptPasswordIfPresent(request.getPassword()));
         config.setStatus(DbConfigStatus.VERIFYING);
         config.setDocContent(null);
         config.setDocGeneratedAt(null);
@@ -112,6 +124,23 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
         return doc;
     }
 
+    /**
+     * 手动刷新数据库文档。
+     *
+     * <p><b>设计说明：</b>复用异步验证链路——先把状态置为 VERIFYING，
+     * 再发送 {@code REFRESH_DOC} 动作消息到 MQ，由消费者执行
+     * {@link #autoVerifyAndGenerateDoc(Long)}（重新验证连接并重新生成文档）。
+     * 与配置创建/更新时的处理链路完全一致，避免重复实现，且刷新过程不阻塞请求线程。</p>
+     */
+    @Override
+    public void refreshDoc(Long userId, Long configId) {
+        DbConfig config = getConfigEntity(userId, configId);
+        trialGuard.denyIfTrialBuiltin(config);
+        config.setStatus(DbConfigStatus.VERIFYING);
+        updateById(config);
+        dbConfigVerifyProducer.send(configId, DbConfigMqConstants.ACTION_REFRESH_DOC);
+    }
+
     @Override
     public String getDocContent(Long userId, Long configId) {
         DbConfig config = getConfigEntity(userId, configId);
@@ -128,7 +157,22 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     }
 
     public String getDecryptedPassword(DbConfig config) {
-        return AesUtil.decrypt(config.getPasswordEncrypted(), encryptKey);
+        // SQLite 等无密码场景下密文为空，直接返回 null 供适配器按类型处理
+        String encrypted = config.getPasswordEncrypted();
+        if (encrypted == null || encrypted.isBlank()) {
+            return null;
+        }
+        return AesUtil.decrypt(encrypted, encryptKey);
+    }
+
+    /**
+     * 密码为空时密文存 null（SQLite 无账密、MongoDB 账密可空），否则 AES 加密存储。
+     */
+    private String encryptPasswordIfPresent(String password) {
+        if (password == null || password.isBlank()) {
+            return null;
+        }
+        return AesUtil.encrypt(password, encryptKey);
     }
 
     @Override
@@ -190,106 +234,25 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
         return config;
     }
 
+    /**
+     * 按配置的数据库类型选择适配器测试连接（JDBC 直连逻辑已下沉到适配器层）。
+     */
     private boolean tryConnect(DbConfig config) {
-        String url = buildJdbcUrl(config);
-        String password = AesUtil.decrypt(config.getPasswordEncrypted(), encryptKey);
-        try (Connection conn = DriverManager.getConnection(url, config.getUsername(), password)) {
-            return conn.isValid(5);
-        } catch (SQLException e) {
-            log.warn("Connection test failed for config {}: {}", config.getId(), e.getMessage());
-            return false;
-        }
+        return databaseAdapterRegistry.getAdapter(config.getDbType())
+                .testConnection(config, getDecryptedPassword(config));
     }
 
+    /**
+     * 抽取 Schema 元数据并渲染为文档。
+     *
+     * <p>JDBC 元数据拼接逻辑已下沉到适配器层（{@code extractSchema}）；
+     * 元数据读取错误已由适配器写入 {@code SchemaMetadata.errorMessage}，
+     * 由 {@link DatabaseDocRenderer#render} 输出到文档中，与旧实现
+     * 「吞掉异常把错误拼进文档」的语义一致。</p>
+     */
     private String buildDatabaseDoc(DbConfig config) {
-        String url = buildJdbcUrl(config);
-        String password = AesUtil.decrypt(config.getPasswordEncrypted(), encryptKey);
-        StringBuilder doc = new StringBuilder();
-        doc.append("# Database: ").append(config.getDbName()).append("\n\n");
-        doc.append("- Type: ").append(config.getDbType()).append("\n");
-        doc.append("- Host: ").append(config.getHost()).append(":").append(config.getPort()).append("\n\n");
-
-        try (Connection conn = DriverManager.getConnection(url, config.getUsername(), password)) {
-            DatabaseMetaData metaData = conn.getMetaData();
-            ResultSet tables = metaData.getTables(config.getDbName(), null, "%", new String[]{"TABLE"});
-
-            while (tables.next()) {
-                String tableName = tables.getString("TABLE_NAME");
-                String tableComment = tables.getString("REMARKS");
-                doc.append("## Table: ").append(tableName).append("\n");
-                if (tableComment != null && !tableComment.isBlank()) {
-                    doc.append("Comment: ").append(tableComment).append("\n");
-                }
-
-                long rowCount = getRowCount(conn, tableName);
-                doc.append("Row count: ~").append(rowCount).append("\n\n");
-
-                doc.append("| Column | Type | Nullable | Key | Comment |\n");
-                doc.append("|--------|------|----------|-----|----------|\n");
-
-                ResultSet columns = metaData.getColumns(config.getDbName(), null, tableName, "%");
-                ResultSet primaryKeys = metaData.getPrimaryKeys(config.getDbName(), null, tableName);
-                Set<String> pkColumns = new HashSet<>();
-                while (primaryKeys.next()) {
-                    pkColumns.add(primaryKeys.getString("COLUMN_NAME"));
-                }
-
-                while (columns.next()) {
-                    String colName = columns.getString("COLUMN_NAME");
-                    String colType = columns.getString("TYPE_NAME");
-                    int colSize = columns.getInt("COLUMN_SIZE");
-                    String nullable = columns.getInt("NULLABLE") == DatabaseMetaData.columnNullable ? "YES" : "NO";
-                    String isKey = pkColumns.contains(colName) ? "PK" : "";
-                    String comment = columns.getString("REMARKS");
-
-                    doc.append("| ").append(colName)
-                            .append(" | ").append(colType).append("(").append(colSize).append(")")
-                            .append(" | ").append(nullable)
-                            .append(" | ").append(isKey)
-                            .append(" | ").append(comment != null ? comment : "")
-                            .append(" |\n");
-                }
-                columns.close();
-
-                ResultSet indexes = metaData.getIndexInfo(config.getDbName(), null, tableName, false, false);
-                Map<String, List<String>> indexMap = new LinkedHashMap<>();
-                while (indexes.next()) {
-                    String indexName = indexes.getString("INDEX_NAME");
-                    String colName = indexes.getString("COLUMN_NAME");
-                    if (indexName != null && colName != null) {
-                        indexMap.computeIfAbsent(indexName, k -> new ArrayList<>()).add(colName);
-                    }
-                }
-                indexes.close();
-
-                if (!indexMap.isEmpty()) {
-                    doc.append("\n**Indexes:**\n");
-                    indexMap.forEach((name, cols) ->
-                            doc.append("- ").append(name).append(": ").append(String.join(", ", cols)).append("\n"));
-                }
-                doc.append("\n---\n\n");
-            }
-            tables.close();
-        } catch (SQLException e) {
-            log.error("Failed to read database metadata", e);
-            doc.append("\n**Error reading metadata:** ").append(e.getMessage());
-        }
-        return doc.toString();
-    }
-
-    private long getRowCount(Connection conn, String tableName) {
-        try (Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM `" + tableName + "`")) {
-            if (rs.next()) return rs.getLong(1);
-        } catch (SQLException e) {
-            log.debug("Failed to count rows for table {}", tableName);
-        }
-        return 0;
-    }
-
-    private String buildJdbcUrl(DbConfig config) {
-        return String.format("jdbc:%s://%s:%d/%s?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC",
-                config.getDbType(), config.getHost(), config.getPort(), config.getDbName());
+        return DatabaseDocRenderer.render(databaseAdapterRegistry.getAdapter(config.getDbType())
+                .extractSchema(config, getDecryptedPassword(config)));
     }
 
     private DbConfigVO toVO(DbConfig config) {

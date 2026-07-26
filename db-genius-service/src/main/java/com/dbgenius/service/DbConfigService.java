@@ -30,4 +30,18 @@ public interface DbConfigService extends IService<DbConfig> {
     void autoVerifyAndGenerateDoc(Long configId);
 
     void validateConfigForChat(Long userId, Long configId);
+
+    /**
+     * 手动刷新数据库文档。
+     *
+     * <p><b>设计意图：</b>数据库结构在配置生成后可能发生变更，本方法允许用户手动触发
+     * 「重新验证连接 + 重新生成文档」。实现上复用异步验证链路（发送
+     * {@code REFRESH_DOC} 动作消息到 MQ，由消费者执行
+     * {@link #autoVerifyAndGenerateDoc}），与配置创建/更新时的链路完全一致，
+     * 避免重复实现，且刷新过程不阻塞请求线程。</p>
+     *
+     * @param userId   当前登录用户 ID
+     * @param configId 数据库配置 ID
+     */
+    void refreshDoc(Long userId, Long configId);
 }
