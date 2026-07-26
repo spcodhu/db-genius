@@ -3,6 +3,7 @@ package com.dbgenius.agent.intent;
 import com.dbgenius.agent.ReasoningChatModel;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Conversation;
+import com.dbgenius.model.entity.Message;
 import com.dbgenius.model.enums.IntentType;
 import com.dbgenius.model.vo.ConversationVO;
 import com.dbgenius.model.vo.IntentClassificationResult;
@@ -12,11 +13,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.Disposable;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -32,6 +36,8 @@ public class SimpleChatHandler implements IntentHandler {
     private final ConversationService conversationService;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
+
+    private static final int HISTORY_SIZE = 10;
 
     @Override
     public IntentType supportedIntent() {
@@ -76,11 +82,18 @@ public class SimpleChatHandler implements IntentHandler {
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
                        IntentClassificationResult classification, Long userId) {
         ConversationVO conversation = getOrCreateConversation(userId, request);
+        sendEvent(emitter, SseEvent.of(taskId, 0, "conversation", conversation.getId()));
+
+        // 先取历史再保存本轮用户消息，避免把当前消息重复塞进历史
+        List<Message> history = conversationService.getRecentMessages(conversation.getId(), HISTORY_SIZE);
+        List<org.springframework.ai.chat.messages.Message> historyMessages = toHistoryMessages(history);
+
         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
         StringBuilder fullContent = new StringBuilder();
 
         Disposable disposable = chatClient.prompt()
+                .messages(historyMessages)
                 .user(request.getMessage())
                 .stream()
                 .chatResponse()
@@ -138,6 +151,18 @@ public class SimpleChatHandler implements IntentHandler {
         }
         return conversationService.createConversation(
                 userId, request.getMessage(), IntentType.SIMPLE_CHAT.getCode(), null);
+    }
+
+    private List<org.springframework.ai.chat.messages.Message> toHistoryMessages(List<Message> history) {
+        List<org.springframework.ai.chat.messages.Message> messages = new ArrayList<>();
+        for (Message message : history) {
+            if ("user".equals(message.getRole())) {
+                messages.add(new UserMessage(message.getContent()));
+            } else if ("assistant".equals(message.getRole())) {
+                messages.add(new AssistantMessage(message.getContent()));
+            }
+        }
+        return messages;
     }
 
     private void sendEvent(SseEmitter emitter, SseEvent event) {

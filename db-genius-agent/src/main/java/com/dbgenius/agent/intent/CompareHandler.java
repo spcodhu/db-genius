@@ -7,20 +7,27 @@ import com.dbgenius.agent.tool.TerminateTool;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.entity.DbConfig;
+import com.dbgenius.model.entity.Message;
 import com.dbgenius.model.enums.IntentType;
 import com.dbgenius.model.vo.ConversationVO;
 import com.dbgenius.model.vo.IntentClassificationResult;
+import com.dbgenius.model.vo.SseEvent;
 import com.dbgenius.service.ConversationService;
 import com.dbgenius.service.DbConfigService;
 import com.dbgenius.trial.TrialGuard;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -66,6 +73,10 @@ public class CompareHandler implements IntentHandler {
     private final TrialGuard trialGuard;
     private final ApplicationContext applicationContext;
 
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
+    private static final int HISTORY_SIZE = 10;
+
     /**
      * 临时验证日志：通过与容器中两个 ChatClient bean 做同一性（==）比较，
      * 打印 agentChatClient 字段实际注入的是哪一个 bean。确认后可删除。
@@ -106,16 +117,43 @@ public class CompareHandler implements IntentHandler {
 
         List<Long> configIds = List.of(preDbConfigId, testDbConfigId);
         ConversationVO conversation = getOrCreateConversation(userId, request, configIds);
+        sendEvent(emitter, SseEvent.of(taskId, 0, "conversation", conversation.getId()));
 
         String message = request.getMessage() != null ? request.getMessage()
                 : "Please compare the pre and test databases and generate deployment SQL.";
+
+        // 先取历史再保存本轮用户消息，避免把当前消息重复塞进历史
+        List<org.springframework.ai.chat.messages.Message> historyMessages =
+                toHistoryMessages(conversationService.getRecentMessages(conversation.getId(), HISTORY_SIZE));
         conversationService.saveMessage(conversation.getId(), "user", message, null, "user");
 
         DbCompareAgent agent = new DbCompareAgent(
                 agentChatClient, dbCompareTool, sqlExecuteTool, terminateTool, preDbDoc, testDbDoc);
+        agent.setHistoryMessages(historyMessages);
         agent.setSummaryCallback(markdown ->
                 conversationService.saveMessage(conversation.getId(), "assistant", markdown, -1, "summary"));
         agent.runStream(message, taskId, emitter);
+    }
+
+    private List<org.springframework.ai.chat.messages.Message> toHistoryMessages(List<Message> history) {
+        List<org.springframework.ai.chat.messages.Message> messages = new ArrayList<>();
+        for (Message message : history) {
+            if ("user".equals(message.getRole())) {
+                messages.add(new UserMessage(message.getContent()));
+            } else if ("assistant".equals(message.getRole())) {
+                messages.add(new AssistantMessage(message.getContent()));
+            }
+        }
+        return messages;
+    }
+
+    private void sendEvent(SseEmitter emitter, SseEvent event) {
+        try {
+            String json = objectMapper.writeValueAsString(event);
+            emitter.send(SseEmitter.event().data(json));
+        } catch (IOException e) {
+            log.warn("[CompareHandler] Failed to send SSE event: {}", e.getMessage());
+        }
     }
 
     private ConversationVO getOrCreateConversation(Long userId, UnifiedChatRequest request, List<Long> dbConfigIds) {

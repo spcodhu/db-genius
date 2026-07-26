@@ -47,6 +47,9 @@ public class ToolCallAgent extends ReActAgent {
 
     @Override
     protected void onStepStart(SseEmitter emitter, String userPrompt) throws Exception {
+        if (!historyMessages.isEmpty()) {
+            messageList.addAll(historyMessages);
+        }
         messageList.add(new UserMessage(userPrompt));
         sendEvent(emitter, SseEvent.of(taskId, 0, "thinking", "Analyzing your request..."));
     }

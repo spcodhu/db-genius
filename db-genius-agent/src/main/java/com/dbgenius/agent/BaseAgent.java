@@ -28,6 +28,8 @@ public abstract class BaseAgent {
     protected List<org.springframework.ai.chat.messages.Message> messageList;
     protected String taskId;
     protected Consumer<String> summaryCallback;
+    /** 历史对话消息，由调用方在 runStream 前注入，随本轮消息一起发给模型。 */
+    protected List<org.springframework.ai.chat.messages.Message> historyMessages = new ArrayList<>();
     /** 当前运行的 SSE 发射器，供 step 循环内部（如 think()）推送事件。 */
     protected SseEmitter emitter;
 
@@ -35,6 +37,10 @@ public abstract class BaseAgent {
 
     public void setSummaryCallback(Consumer<String> summaryCallback) {
         this.summaryCallback = summaryCallback;
+    }
+
+    public void setHistoryMessages(List<org.springframework.ai.chat.messages.Message> historyMessages) {
+        this.historyMessages = historyMessages;
     }
 
     protected BaseAgent(String name, int maxSteps) {
