@@ -1,0 +1,468 @@
+diff --git a/.env.example b/.env.example
+index c0f55ef..edfa801 100644
+--- a/.env.example
++++ b/.env.example
+@@ -6,22 +6,31 @@ SPRING_DATASOURCE_PASSWORD=postgres
+ 
+ # Server port
+ SERVER_PORT=8109
+ 
+ # DeepSeek API
+ DEEPSEEK_API_KEY=sk-your-deepseek-api-key
+ 
+ # AES-256 encryption key (32 characters)
+ DB_GENIUS_ENCRYPT_KEY=your-32-character-secret-key!!!!
+ 
+-# File upload directory
+-DB_GENIUS_FILE_DIR=/tmp/db-genius/uploads
++# Aliyun OSS (file upload storage, required)
++# RAM 子账号最小授权：该 bucket 的读写 + OCR 调用
++ALIYUN_OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
++ALIYUN_OSS_BUCKET=your-bucket-name
++ALIYUN_ACCESS_KEY_ID=your-access-key-id
++ALIYUN_ACCESS_KEY_SECRET=your-access-key-secret
++# OSS 对象 key 统一前缀（可选，默认 uploads/）
++ALIYUN_OSS_DIR_PREFIX=uploads/
++
++# Aliyun OCR (image text recognition, optional, default disabled)
++ALIYUN_OCR_ENABLED=false
+ 
+ # Trial mode (public demo)
+ DB_GENIUS_TRIAL_ENABLED=false
+ DB_GENIUS_TRIAL_BUILTIN_HOST=
+ DB_GENIUS_TRIAL_BUILTIN_PORT=3306
+ DB_GENIUS_TRIAL_BUILTIN_DB_NAME=db-genius
+ DB_GENIUS_TRIAL_BUILTIN_USERNAME=
+ DB_GENIUS_TRIAL_BUILTIN_PASSWORD=
+ 
+ # RabbitMQ (async db-config verify & doc generation)
+diff --git a/db-genius-agent/pom.xml b/db-genius-agent/pom.xml
+index c6d45f3..ea8c384 100644
+--- a/db-genius-agent/pom.xml
++++ b/db-genius-agent/pom.xml
+@@ -16,19 +16,27 @@
+ 
+     <dependencies>
+         <dependency>
+             <groupId>com.dbgenius</groupId>
+             <artifactId>db-genius-service</artifactId>
+         </dependency>
+         <dependency>
+             <groupId>org.springframework.ai</groupId>
+             <artifactId>spring-ai-starter-model-openai</artifactId>
+         </dependency>
++        <dependency>
++            <groupId>org.apache.pdfbox</groupId>
++            <artifactId>pdfbox</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.apache.poi</groupId>
++            <artifactId>poi-ooxml</artifactId>
++        </dependency>
+ 
+         <!-- Test -->
+         <dependency>
+             <groupId>org.springframework.boot</groupId>
+             <artifactId>spring-boot-starter-test</artifactId>
+             <scope>test</scope>
+         </dependency>
+     </dependencies>
+ </project>
+diff --git a/db-genius-model/src/main/java/com/dbgenius/model/entity/UploadedFile.java b/db-genius-model/src/main/java/com/dbgenius/model/entity/UploadedFile.java
+index ff64578..ec6a06b 100644
+--- a/db-genius-model/src/main/java/com/dbgenius/model/entity/UploadedFile.java
++++ b/db-genius-model/src/main/java/com/dbgenius/model/entity/UploadedFile.java
+@@ -9,19 +9,19 @@ import java.time.LocalDateTime;
+ @TableName("uploaded_file")
+ public class UploadedFile {
+ 
+     @TableId(type = IdType.AUTO)
+     private Long id;
+ 
+     private Long userId;
+ 
+     private String originalName;
+ 
+-    private String storedPath;
++    private String ossKey;
+ 
+     private Long fileSize;
+ 
+     private String contentType;
+ 
+     @TableField(fill = FieldFill.INSERT)
+     private LocalDateTime createdAt;
+ }
+diff --git a/db-genius-service/pom.xml b/db-genius-service/pom.xml
+index 3cc63a2..cf8c973 100644
+--- a/db-genius-service/pom.xml
++++ b/db-genius-service/pom.xml
+@@ -24,20 +24,24 @@
+             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+         </dependency>
+         <dependency>
+             <groupId>cn.dev33</groupId>
+             <artifactId>sa-token-spring-boot3-starter</artifactId>
+         </dependency>
+         <dependency>
+             <groupId>com.alibaba</groupId>
+             <artifactId>easyexcel</artifactId>
+         </dependency>
++        <dependency>
++            <groupId>com.aliyun.oss</groupId>
++            <artifactId>aliyun-sdk-oss</artifactId>
++        </dependency>
+         <dependency>
+             <groupId>org.springframework.boot</groupId>
+             <artifactId>spring-boot-starter-jdbc</artifactId>
+         </dependency>
+         <dependency>
+             <groupId>org.springframework.boot</groupId>
+             <artifactId>spring-boot-starter-amqp</artifactId>
+         </dependency>
+         <dependency>
+             <groupId>com.mysql</groupId>
+diff --git a/db-genius-service/src/main/java/com/dbgenius/service/FileUploadService.java b/db-genius-service/src/main/java/com/dbgenius/service/FileUploadService.java
+index 371bfd3..2c0b82f 100644
+--- a/db-genius-service/src/main/java/com/dbgenius/service/FileUploadService.java
++++ b/db-genius-service/src/main/java/com/dbgenius/service/FileUploadService.java
+@@ -1,12 +1,22 @@
+ package com.dbgenius.service;
+ 
+ import com.baomidou.mybatisplus.extension.service.IService;
+ import com.dbgenius.model.entity.UploadedFile;
+ import org.springframework.web.multipart.MultipartFile;
+ 
++import java.io.InputStream;
++
+ public interface FileUploadService extends IService<UploadedFile> {
+ 
+     UploadedFile uploadFile(Long userId, MultipartFile file);
+ 
+-    String getFilePath(Long fileId);
++    /**
++     * 查库并校验属主：文件不存在抛 404，不属于该用户抛 403
++     */
++    UploadedFile getOwnedFile(Long fileId, Long userId);
++
++    /**
++     * 打开文件内容流（委托 OSS），调用方负责关闭
++     */
++    InputStream openStream(UploadedFile file);
+ }
+diff --git a/db-genius-service/src/main/java/com/dbgenius/service/impl/FileUploadServiceImpl.java b/db-genius-service/src/main/java/com/dbgenius/service/impl/FileUploadServiceImpl.java
+index e047482..935105a 100644
+--- a/db-genius-service/src/main/java/com/dbgenius/service/impl/FileUploadServiceImpl.java
++++ b/db-genius-service/src/main/java/com/dbgenius/service/impl/FileUploadServiceImpl.java
+@@ -1,71 +1,83 @@
+ package com.dbgenius.service.impl;
+ 
+ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+ import com.dbgenius.common.exception.BusinessException;
+ import com.dbgenius.mapper.UploadedFileMapper;
++import com.dbgenius.model.constant.FileTypes;
+ import com.dbgenius.model.entity.UploadedFile;
+ import com.dbgenius.service.FileUploadService;
++import com.dbgenius.service.OssService;
++import com.dbgenius.service.config.OssProperties;
+ import com.dbgenius.trial.TrialGuard;
+ import lombok.RequiredArgsConstructor;
+-import org.springframework.beans.factory.annotation.Value;
+ import org.springframework.stereotype.Service;
+ import org.springframework.web.multipart.MultipartFile;
+ 
+ import java.io.IOException;
+-import java.nio.file.Files;
+-import java.nio.file.Path;
+-import java.nio.file.Paths;
++import java.io.InputStream;
+ import java.util.UUID;
+ 
+ @Service
+ @RequiredArgsConstructor
+ public class FileUploadServiceImpl extends ServiceImpl<UploadedFileMapper, UploadedFile> implements FileUploadService {
+ 
+     private final TrialGuard trialGuard;
+-
+-    @Value("${db-genius.file-upload-dir}")
+-    private String uploadDir;
++    private final OssService ossService;
++    private final OssProperties ossProperties;
+ 
+     @Override
+     public UploadedFile uploadFile(Long userId, MultipartFile file) {
+         trialGuard.denyIfTrial("试用版暂不支持文件上传");
+         if (file.isEmpty()) {
+             throw new BusinessException("File is empty");
+         }
+ 
+-        try {
+-            Path dirPath = Paths.get(uploadDir);
+-            Files.createDirectories(dirPath);
+-
+-            String originalName = file.getOriginalFilename();
+-            String extension = "";
+-            if (originalName != null && originalName.contains(".")) {
+-                extension = originalName.substring(originalName.lastIndexOf("."));
+-            }
+-            String storedName = UUID.randomUUID() + extension;
+-            Path storedPath = dirPath.resolve(storedName);
+-            file.transferTo(storedPath.toFile());
++        String originalName = file.getOriginalFilename();
++        if (!FileTypes.isAllowed(originalName)) {
++            throw new BusinessException("Unsupported file type, allowed: documents "
++                    + FileTypes.DOC_EXTENSIONS + ", images " + FileTypes.IMAGE_EXTENSIONS);
++        }
++        if (file.getSize() > FileTypes.MAX_FILE_SIZE) {
++            throw new BusinessException("File too large, max " + (FileTypes.MAX_FILE_SIZE / 1024 / 1024) + "MB");
++        }
+ 
+-            UploadedFile uploadedFile = new UploadedFile();
+-            uploadedFile.setUserId(userId);
+-            uploadedFile.setOriginalName(originalName);
+-            uploadedFile.setStoredPath(storedPath.toString());
+-            uploadedFile.setFileSize(file.getSize());
+-            uploadedFile.setContentType(file.getContentType());
+-            save(uploadedFile);
++        String dirPrefix = ossProperties.getDirPrefix();
++        if (!dirPrefix.endsWith("/")) {
++            dirPrefix += "/";
++        }
++        String ossKey = dirPrefix + userId + "/" + UUID.randomUUID() + "." + FileTypes.getExtension(originalName);
+ 
+-            return uploadedFile;
++        try (InputStream in = file.getInputStream()) {
++            ossService.upload(ossKey, in, file.getSize(), file.getContentType());
+         } catch (IOException e) {
+             throw new BusinessException("File upload failed: " + e.getMessage());
+         }
++
++        UploadedFile uploadedFile = new UploadedFile();
++        uploadedFile.setUserId(userId);
++        uploadedFile.setOriginalName(originalName);
++        uploadedFile.setOssKey(ossKey);
++        uploadedFile.setFileSize(file.getSize());
++        uploadedFile.setContentType(file.getContentType());
++        save(uploadedFile);
++
++        return uploadedFile;
+     }
+ 
+     @Override
+-    public String getFilePath(Long fileId) {
++    public UploadedFile getOwnedFile(Long fileId, Long userId) {
+         UploadedFile file = getById(fileId);
+         if (file == null) {
+             throw new BusinessException(404, "File not found");
+         }
+-        return file.getStoredPath();
++        if (!file.getUserId().equals(userId)) {
++            throw new BusinessException(403, "No permission to access this file");
++        }
++        return file;
++    }
++
++    @Override
++    public InputStream openStream(UploadedFile file) {
++        return ossService.download(file.getOssKey());
+     }
+ }
+diff --git a/db-genius-web/src/main/java/com/dbgenius/controller/FileController.java b/db-genius-web/src/main/java/com/dbgenius/controller/FileController.java
+index f100a3e..835c5fd 100644
+--- a/db-genius-web/src/main/java/com/dbgenius/controller/FileController.java
++++ b/db-genius-web/src/main/java/com/dbgenius/controller/FileController.java
+@@ -1,22 +1,22 @@
+ package com.dbgenius.controller;
+ 
+ import cn.dev33.satoken.stp.StpUtil;
+ import com.dbgenius.common.result.R;
+-import com.dbgenius.model.entity.UploadedFile;
++import com.dbgenius.model.vo.UploadedFileVO;
+ import com.dbgenius.service.FileUploadService;
+ import lombok.RequiredArgsConstructor;
+ import org.springframework.web.bind.annotation.*;
+ import org.springframework.web.multipart.MultipartFile;
+ 
+ @RestController
+ @RequestMapping("/file")
+ @RequiredArgsConstructor
+ public class FileController {
+ 
+     private final FileUploadService fileUploadService;
+ 
+     @PostMapping("/upload")
+-    public R<UploadedFile> upload(@RequestParam("file") MultipartFile file) {
+-        return R.ok(fileUploadService.uploadFile(StpUtil.getLoginIdAsLong(), file));
++    public R<UploadedFileVO> upload(@RequestParam("file") MultipartFile file) {
++        return R.ok(UploadedFileVO.from(fileUploadService.uploadFile(StpUtil.getLoginIdAsLong(), file)));
+     }
+ }
+diff --git a/db-genius-web/src/main/resources/application.yml b/db-genius-web/src/main/resources/application.yml
+index 2b4aaab..a2e342b 100644
+--- a/db-genius-web/src/main/resources/application.yml
++++ b/db-genius-web/src/main/resources/application.yml
+@@ -52,21 +52,28 @@ sa-token:
+   timeout: 86400
+   active-timeout: 3600
+   is-concurrent: true
+   is-share: true
+   token-style: uuid
+   is-log: false
+   is-read-header: true
+ 
+ db-genius:
+   encrypt-key: ${DB_GENIUS_ENCRYPT_KEY:default-encrypt-key-change-in-production!!}
+-  file-upload-dir: ${DB_GENIUS_FILE_DIR:/tmp/db-genius/uploads}
++  oss:
++    endpoint: ${ALIYUN_OSS_ENDPOINT:}
++    bucket: ${ALIYUN_OSS_BUCKET:}
++    access-key-id: ${ALIYUN_ACCESS_KEY_ID:}
++    access-key-secret: ${ALIYUN_ACCESS_KEY_SECRET:}
++    dir-prefix: ${ALIYUN_OSS_DIR_PREFIX:uploads/}
++  ocr:
++    enabled: ${ALIYUN_OCR_ENABLED:false}
+   trial:
+     enabled: ${DB_GENIUS_TRIAL_ENABLED:false}
+     builtin-db-name: ${DB_GENIUS_TRIAL_BUILTIN_DB_NAME:db-genius}
+     builtin-host: ${DB_GENIUS_TRIAL_BUILTIN_HOST:}
+     builtin-port: ${DB_GENIUS_TRIAL_BUILTIN_PORT:3306}
+     builtin-username: ${DB_GENIUS_TRIAL_BUILTIN_USERNAME:}
+     builtin-password: ${DB_GENIUS_TRIAL_BUILTIN_PASSWORD:}
+ 
+ logging:
+   level:
+diff --git a/db-genius-web/src/main/resources/db/schema.sql b/db-genius-web/src/main/resources/db/schema.sql
+index 889ba9d..abbc3a0 100644
+--- a/db-genius-web/src/main/resources/db/schema.sql
++++ b/db-genius-web/src/main/resources/db/schema.sql
+@@ -52,21 +52,21 @@ CREATE TABLE IF NOT EXISTS message (
+     step INT,
+     type VARCHAR(32),
+     file_url TEXT,
+     created_at TIMESTAMP NOT NULL DEFAULT NOW()
+ );
+ 
+ CREATE TABLE IF NOT EXISTS uploaded_file (
+     id BIGSERIAL PRIMARY KEY,
+     user_id BIGINT NOT NULL REFERENCES sys_user(id),
+     original_name VARCHAR(256) NOT NULL,
+-    stored_path TEXT NOT NULL,
++    oss_key VARCHAR(512) NOT NULL,
+     file_size BIGINT,
+     content_type VARCHAR(128),
+     created_at TIMESTAMP NOT NULL DEFAULT NOW()
+ );
+ 
+ CREATE TABLE IF NOT EXISTS sales_contact (
+     id BIGSERIAL PRIMARY KEY,
+     company_name VARCHAR(256) NOT NULL,
+     contact VARCHAR(256) NOT NULL,
+     remark TEXT,
+diff --git a/deploy/.env.example b/deploy/.env.example
+index d511d84..44b202e 100644
+--- a/deploy/.env.example
++++ b/deploy/.env.example
+@@ -17,22 +17,31 @@ SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/db_genius?currentSchema=a
+ SPRING_DATASOURCE_USERNAME=postgres
+ SPRING_DATASOURCE_PASSWORD=postgres
+ 
+ # DeepSeek API Key，必须真实有效
+ DEEPSEEK_API_KEY=sk-your-real-deepseek-api-key
+ 
+ # AES-256 加密密钥，必须刚好 32 个字符
+ # 生成后请勿随意修改，否则已加密的数据库密码将无法解密
+ DB_GENIUS_ENCRYPT_KEY=your-32-character-secret-key!!!!
+ 
+-# 文件上传目录
+-DB_GENIUS_FILE_DIR=/opt/db-genius/uploads
++# 阿里云 OSS（文件上传存储，必填）
++# RAM 子账号最小授权：该 bucket 的读写 + OCR 调用
++ALIYUN_OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
++ALIYUN_OSS_BUCKET=your-bucket-name
++ALIYUN_ACCESS_KEY_ID=your-access-key-id
++ALIYUN_ACCESS_KEY_SECRET=your-access-key-secret
++# OSS 对象 key 统一前缀（可选，默认 uploads/）
++ALIYUN_OSS_DIR_PREFIX=uploads/
++
++# 阿里云 OCR 图片文字识别（可选，默认关闭）
++ALIYUN_OCR_ENABLED=false
+ 
+ # 试用版模式（可选）
+ DB_GENIUS_TRIAL_ENABLED=false
+ DB_GENIUS_TRIAL_BUILTIN_HOST=
+ DB_GENIUS_TRIAL_BUILTIN_PORT=3306
+ DB_GENIUS_TRIAL_BUILTIN_DB_NAME=db-genius
+ DB_GENIUS_TRIAL_BUILTIN_USERNAME=
+ DB_GENIUS_TRIAL_BUILTIN_PASSWORD=
+ 
+ # RabbitMQ（异步验证数据库配置并生成文档，默认本机）
+diff --git a/pom.xml b/pom.xml
+index e5784fc..dec0318 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -30,20 +30,23 @@
+         <java.version>21</java.version>
+         <maven.compiler.source>21</maven.compiler.source>
+         <maven.compiler.target>21</maven.compiler.target>
+         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+ 
+         <spring-ai.version>1.1.8</spring-ai.version>
+         <mybatis-plus.version>3.5.9</mybatis-plus.version>
+         <sa-token.version>1.39.0</sa-token.version>
+         <hutool.version>5.8.37</hutool.version>
+         <easyexcel.version>4.0.3</easyexcel.version>
++        <aliyun-oss.version>3.17.4</aliyun-oss.version>
++        <pdfbox.version>3.0.3</pdfbox.version>
++        <poi.version>5.2.5</poi.version>
+     </properties>
+ 
+     <dependencyManagement>
+         <dependencies>
+             <!-- Spring AI BOM -->
+             <dependency>
+                 <groupId>org.springframework.ai</groupId>
+                 <artifactId>spring-ai-bom</artifactId>
+                 <version>${spring-ai.version}</version>
+                 <type>pom</type>
+@@ -92,20 +95,41 @@
+                 <artifactId>hutool-all</artifactId>
+                 <version>${hutool.version}</version>
+             </dependency>
+ 
+             <!-- EasyExcel -->
+             <dependency>
+                 <groupId>com.alibaba</groupId>
+                 <artifactId>easyexcel</artifactId>
+                 <version>${easyexcel.version}</version>
+             </dependency>
++
++            <!-- Aliyun OSS -->
++            <dependency>
++                <groupId>com.aliyun.oss</groupId>
++                <artifactId>aliyun-sdk-oss</artifactId>
++                <version>${aliyun-oss.version}</version>
++            </dependency>
++
++            <!-- PDFBox -->
++            <dependency>
++                <groupId>org.apache.pdfbox</groupId>
++                <artifactId>pdfbox</artifactId>
++                <version>${pdfbox.version}</version>
++            </dependency>
++
++            <!-- Apache POI (docx 解析，显式 pin 对齐 EasyExcel 传递版本) -->
++            <dependency>
++                <groupId>org.apache.poi</groupId>
++                <artifactId>poi-ooxml</artifactId>
++                <version>${poi.version}</version>
++            </dependency>
+         </dependencies>
+     </dependencyManagement>
+ 
+     <dependencies>
+         <dependency>
+             <groupId>org.projectlombok</groupId>
+             <artifactId>lombok</artifactId>
+             <optional>true</optional>
+         </dependency>
+     </dependencies>

@@ -974,18 +974,14 @@ components:
 
     UploadedFile:
       type: object
+      description: 上传文件信息（UploadedFileVO），不含 OSS 存储 key
       properties:
         id:
-          type: integer
-          format: int64
-        userId:
           type: integer
           format: int64
         originalName:
           type: string
           example: 用户数据.xlsx
-        storedPath:
-          type: string
         fileSize:
           type: integer
           format: int64

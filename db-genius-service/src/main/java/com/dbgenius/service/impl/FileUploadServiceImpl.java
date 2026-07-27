@@ -3,18 +3,18 @@ package com.dbgenius.service.impl;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dbgenius.common.exception.BusinessException;
 import com.dbgenius.mapper.UploadedFileMapper;
+import com.dbgenius.model.constant.FileTypes;
 import com.dbgenius.model.entity.UploadedFile;
 import com.dbgenius.service.FileUploadService;
+import com.dbgenius.service.OssService;
+import com.dbgenius.service.config.OssProperties;
 import com.dbgenius.trial.TrialGuard;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.io.InputStream;
 import java.util.UUID;
 
 @Service
@@ -22,9 +22,8 @@ import java.util.UUID;
 public class FileUploadServiceImpl extends ServiceImpl<UploadedFileMapper, UploadedFile> implements FileUploadService {
 
     private final TrialGuard trialGuard;
-
-    @Value("${db-genius.file-upload-dir}")
-    private String uploadDir;
+    private final OssService ossService;
+    private final OssProperties ossProperties;
 
     @Override
     public UploadedFile uploadFile(Long userId, MultipartFile file) {
@@ -33,39 +32,52 @@ public class FileUploadServiceImpl extends ServiceImpl<UploadedFileMapper, Uploa
             throw new BusinessException("File is empty");
         }
 
-        try {
-            Path dirPath = Paths.get(uploadDir);
-            Files.createDirectories(dirPath);
+        String originalName = file.getOriginalFilename();
+        if (!FileTypes.isAllowed(originalName)) {
+            throw new BusinessException("Unsupported file type, allowed: documents "
+                    + FileTypes.DOC_EXTENSIONS + ", images " + FileTypes.IMAGE_EXTENSIONS);
+        }
+        if (file.getSize() > FileTypes.MAX_FILE_SIZE) {
+            throw new BusinessException("File too large, max " + (FileTypes.MAX_FILE_SIZE / 1024 / 1024) + "MB");
+        }
 
-            String originalName = file.getOriginalFilename();
-            String extension = "";
-            if (originalName != null && originalName.contains(".")) {
-                extension = originalName.substring(originalName.lastIndexOf("."));
-            }
-            String storedName = UUID.randomUUID() + extension;
-            Path storedPath = dirPath.resolve(storedName);
-            file.transferTo(storedPath.toFile());
+        String dirPrefix = ossProperties.getDirPrefix();
+        if (!dirPrefix.endsWith("/")) {
+            dirPrefix += "/";
+        }
+        String ossKey = dirPrefix + userId + "/" + UUID.randomUUID() + "." + FileTypes.getExtension(originalName);
 
-            UploadedFile uploadedFile = new UploadedFile();
-            uploadedFile.setUserId(userId);
-            uploadedFile.setOriginalName(originalName);
-            uploadedFile.setStoredPath(storedPath.toString());
-            uploadedFile.setFileSize(file.getSize());
-            uploadedFile.setContentType(file.getContentType());
-            save(uploadedFile);
-
-            return uploadedFile;
+        try (InputStream in = file.getInputStream()) {
+            ossService.upload(ossKey, in, file.getSize(), file.getContentType());
         } catch (IOException e) {
             throw new BusinessException("File upload failed: " + e.getMessage());
         }
+
+        UploadedFile uploadedFile = new UploadedFile();
+        uploadedFile.setUserId(userId);
+        uploadedFile.setOriginalName(originalName);
+        uploadedFile.setOssKey(ossKey);
+        uploadedFile.setFileSize(file.getSize());
+        uploadedFile.setContentType(file.getContentType());
+        save(uploadedFile);
+
+        return uploadedFile;
     }
 
     @Override
-    public String getFilePath(Long fileId) {
+    public UploadedFile getOwnedFile(Long fileId, Long userId) {
         UploadedFile file = getById(fileId);
         if (file == null) {
             throw new BusinessException(404, "File not found");
         }
-        return file.getStoredPath();
+        if (!file.getUserId().equals(userId)) {
+            throw new BusinessException(403, "No permission to access this file");
+        }
+        return file;
+    }
+
+    @Override
+    public InputStream openStream(UploadedFile file) {
+        return ossService.download(file.getOssKey());
     }
 }

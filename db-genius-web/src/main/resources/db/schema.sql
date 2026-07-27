@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS uploaded_file (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES sys_user(id),
     original_name VARCHAR(256) NOT NULL,
-    stored_path TEXT NOT NULL,
+    oss_key VARCHAR(512) NOT NULL,
     file_size BIGINT,
     content_type VARCHAR(128),
     created_at TIMESTAMP NOT NULL DEFAULT NOW()

@@ -1,0 +1,974 @@
+diff --git a/.env.example b/.env.example
+index c0f55ef..4c1f34a 100644
+--- a/.env.example
++++ b/.env.example
+@@ -6,22 +6,33 @@ SPRING_DATASOURCE_PASSWORD=postgres
+ 
+ # Server port
+ SERVER_PORT=8109
+ 
+ # DeepSeek API
+ DEEPSEEK_API_KEY=sk-your-deepseek-api-key
+ 
+ # AES-256 encryption key (32 characters)
+ DB_GENIUS_ENCRYPT_KEY=your-32-character-secret-key!!!!
+ 
+-# File upload directory
+-DB_GENIUS_FILE_DIR=/tmp/db-genius/uploads
++# Aliyun OSS (file upload storage, required)
++# RAM 子账号最小授权：该 bucket 的读写 + OCR 调用
++ALIYUN_OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
++ALIYUN_OSS_BUCKET=your-bucket-name
++ALIYUN_ACCESS_KEY_ID=your-access-key-id
++ALIYUN_ACCESS_KEY_SECRET=your-access-key-secret
++# OSS 对象 key 统一前缀（可选，默认 uploads/）
++ALIYUN_OSS_DIR_PREFIX=uploads/
++
++# Aliyun OCR (image text recognition, optional, default disabled)
++ALIYUN_OCR_ENABLED=false
++# OCR endpoint（可选，默认 ocr.cn-hangzhou.aliyuncs.com）
++ALIYUN_OCR_ENDPOINT=ocr.cn-hangzhou.aliyuncs.com
+ 
+ # Trial mode (public demo)
+ DB_GENIUS_TRIAL_ENABLED=false
+ DB_GENIUS_TRIAL_BUILTIN_HOST=
+ DB_GENIUS_TRIAL_BUILTIN_PORT=3306
+ DB_GENIUS_TRIAL_BUILTIN_DB_NAME=db-genius
+ DB_GENIUS_TRIAL_BUILTIN_USERNAME=
+ DB_GENIUS_TRIAL_BUILTIN_PASSWORD=
+ 
+ # RabbitMQ (async db-config verify & doc generation)
+diff --git a/AGENTS.md b/AGENTS.md
+index 6c33d4e..7a4cb40 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -24,14 +24,15 @@ Spring Boot 3.4 multi-module Maven project: an AI agent that turns natural langu
+ ## Module Layout
+ 
+ `common` (Result/exceptions/AES) → `model` (entity/DTO/VO/enums) → `service` (business + MyBatis-Plus mappers) → `agent` (agent framework + tools) → `web` (controllers, config, entry point).
+ 
+ ## Conventions & Security
+ 
+ - Auth is Sa-Token; token header is `Authorization`.
+ - DB passwords are encrypted with AES-256-GCM using `DB_GENIUS_ENCRYPT_KEY` (must be 32 chars). Never log or return raw credentials.
+ - **Trial mode** (`DB_GENIUS_TRIAL_ENABLED=true`) enforces many restrictions (read-only SQL only, masked config fields, blocked mutations returning 403). When touching db-config, chat, file-upload, or user creation, respect the trial guards — see `TrialGuardTest`.
+ - MyBatis-Plus: `map-underscore-to-camel-case` is on; enums use `MybatisEnumTypeHandler` (`com.dbgenius.model.enums`).
++- **File storage is Aliyun OSS** (`db-genius.oss.*` env vars; `uploaded_file` table stores `oss_key`, not a local path). Agent file tools are `FileReadTool` (docs) and `ImageReadTool` (OCR via `db-genius.ocr.*`) — the old `ExcelParseTool` is gone. Tools take only a `fileId`; `userId`/`allowedFileIds` travel via Spring AI `ToolContext` (`FileAccessGuard`), never in LLM-visible args.
+ 
+ ## Environment
+ 
+ Copy `.env.example` → `.env`. Required: `SPRING_DATASOURCE_*`, `DEEPSEEK_API_KEY`, `DB_GENIUS_ENCRYPT_KEY`. Dev shell here is git-bash on Windows.
+diff --git a/README.md b/README.md
+index 8e67b2a..d5b98b9 100644
+--- a/README.md
++++ b/README.md
+@@ -272,21 +272,27 @@ All SSE events follow this JSON format:
+ 
+ ## Environment Variables
+ 
+ | Variable | Description | Required |
+ |----------|-------------|----------|
+ | `SPRING_DATASOURCE_URL` | PostgreSQL JDBC URL | Yes |
+ | `SPRING_DATASOURCE_USERNAME` | PostgreSQL username | Yes |
+ | `SPRING_DATASOURCE_PASSWORD` | PostgreSQL password | Yes |
+ | `DEEPSEEK_API_KEY` | DeepSeek API key | Yes |
+ | `DB_GENIUS_ENCRYPT_KEY` | AES-256 encryption key (32 chars) | Yes |
+-| `DB_GENIUS_FILE_DIR` | File upload directory | No |
++| `ALIYUN_OSS_ENDPOINT` | Aliyun OSS endpoint (file upload storage) | Yes |
++| `ALIYUN_OSS_BUCKET` | Aliyun OSS bucket name | Yes |
++| `ALIYUN_ACCESS_KEY_ID` | Aliyun RAM AccessKey ID (OSS read/write + OCR) | Yes |
++| `ALIYUN_ACCESS_KEY_SECRET` | Aliyun RAM AccessKey secret | Yes |
++| `ALIYUN_OSS_DIR_PREFIX` | OSS object key prefix | No (default `uploads/`) |
++| `ALIYUN_OCR_ENABLED` | Enable Aliyun OCR for image text recognition | No (default `false`) |
++| `ALIYUN_OCR_ENDPOINT` | Aliyun OCR endpoint | No (default `ocr.cn-hangzhou.aliyuncs.com`) |
+ | `SPRING_RABBITMQ_HOST` | RabbitMQ host | No (default `localhost`) |
+ | `SPRING_RABBITMQ_PORT` | RabbitMQ port | No (default `5672`) |
+ | `SPRING_RABBITMQ_USERNAME` | RabbitMQ username | No (default `guest`) |
+ | `SPRING_RABBITMQ_PASSWORD` | RabbitMQ password | No (default `guest`) |
+ 
+ ## Design Patterns
+ 
+ | Pattern | Usage |
+ |---------|-------|
+ | Template Method | BaseAgent → ReActAgent → ToolCallAgent lifecycle |
+diff --git a/api-docs.yaml b/api-docs.yaml
+index 451e0a9..3b594ce 100644
+--- a/api-docs.yaml
++++ b/api-docs.yaml
+@@ -967,32 +967,28 @@ components:
+                  classifying, classified, clarify, routing, content]
+         fileUrl:
+           type: string
+           nullable: true
+         createdAt:
+           type: string
+           format: date-time
+ 
+     UploadedFile:
+       type: object
++      description: 上传文件信息（UploadedFileVO），不含 OSS 存储 key
+       properties:
+         id:
+           type: integer
+           format: int64
+-        userId:
+-          type: integer
+-          format: int64
+         originalName:
+           type: string
+           example: 用户数据.xlsx
+-        storedPath:
+-          type: string
+         fileSize:
+           type: integer
+           format: int64
+         contentType:
+           type: string
+           example: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+         createdAt:
+           type: string
+           format: date-time
+ 
+diff --git a/db-genius-agent/pom.xml b/db-genius-agent/pom.xml
+index c6d45f3..e1f8903 100644
+--- a/db-genius-agent/pom.xml
++++ b/db-genius-agent/pom.xml
+@@ -16,19 +16,31 @@
+ 
+     <dependencies>
+         <dependency>
+             <groupId>com.dbgenius</groupId>
+             <artifactId>db-genius-service</artifactId>
+         </dependency>
+         <dependency>
+             <groupId>org.springframework.ai</groupId>
+             <artifactId>spring-ai-starter-model-openai</artifactId>
+         </dependency>
++        <dependency>
++            <groupId>org.apache.pdfbox</groupId>
++            <artifactId>pdfbox</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.apache.poi</groupId>
++            <artifactId>poi-ooxml</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>com.aliyun</groupId>
++            <artifactId>ocr_api20210707</artifactId>
++        </dependency>
+ 
+         <!-- Test -->
+         <dependency>
+             <groupId>org.springframework.boot</groupId>
+             <artifactId>spring-boot-starter-test</artifactId>
+             <scope>test</scope>
+         </dependency>
+     </dependencies>
+ </project>
+diff --git a/db-genius-agent/src/main/java/com/dbgenius/agent/DbWorkflowAgent.java b/db-genius-agent/src/main/java/com/dbgenius/agent/DbWorkflowAgent.java
+index e4af618..b296079 100644
+--- a/db-genius-agent/src/main/java/com/dbgenius/agent/DbWorkflowAgent.java
++++ b/db-genius-agent/src/main/java/com/dbgenius/agent/DbWorkflowAgent.java
+@@ -1,37 +1,44 @@
+ package com.dbgenius.agent;
+ 
+-import com.dbgenius.agent.tool.ExcelParseTool;
++import com.dbgenius.agent.tool.FileReadTool;
++import com.dbgenius.agent.tool.ImageReadTool;
+ import com.dbgenius.agent.tool.SqlExecuteTool;
+ import com.dbgenius.agent.tool.TerminateTool;
+ import com.dbgenius.model.vo.SseEvent;
+ import lombok.extern.slf4j.Slf4j;
+ import org.springframework.ai.chat.client.ChatClient;
+ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+ 
++import java.util.Map;
++
+ @Slf4j
+ public class DbWorkflowAgent extends ToolCallAgent {
+ 
+     private final String dbDocContext;
+     private final boolean hasFiles;
+ 
+     public DbWorkflowAgent(ChatClient chatClient, SqlExecuteTool sqlExecuteTool,
+-                           ExcelParseTool excelParseTool, TerminateTool terminateTool,
+-                           String dbDocContext, boolean hasFiles) {
++                           FileReadTool fileReadTool, ImageReadTool imageReadTool,
++                           TerminateTool terminateTool,
++                           String dbDocContext, boolean hasFiles,
++                           Map<String, Object> toolContext) {
+         super(
+                 "DbWorkflowAgent",
+                 buildSystemPrompt(dbDocContext, hasFiles),
+                 buildNextStepPrompt(hasFiles),
+                 20,
+                 chatClient,
++                toolContext,
+                 sqlExecuteTool,
+-                excelParseTool,
++                fileReadTool,
++                imageReadTool,
+                 terminateTool
+         );
+         this.dbDocContext = dbDocContext;
+         this.hasFiles = hasFiles;
+     }
+ 
+     @Override
+     protected void onStepStart(SseEmitter emitter, String userPrompt) throws Exception {
+         super.onStepStart(emitter, userPrompt);
+         String hint = hasFiles
+@@ -58,24 +65,26 @@ public class DbWorkflowAgent extends ToolCallAgent {
+                 5. If an error occurs, analyze the error, fix the issue, and retry.
+                 6. When ALL steps are complete and verified, call doTerminate with a comprehensive summary.
+                 7. NEVER skip verification steps.
+                 8. Respond in the same language as the user.
+                 """);
+ 
+         if (hasFiles) {
+             sb.append("""
+                     
+                     ## File Processing
+-                    - First, use the parseExcel tool to read the uploaded file.
+-                    - Analyze the data structure (columns, types, sample data).
++                    - Attached files are given in the conversation as [file#N: fileName] references.
++                    - Use the readFile tool to read documents (xlsx/xls/csv/docx/pdf/md); use the readImage tool to recognize text in images (png/jpg/jpeg/webp/bmp). Pass the number N as the fileId argument.
++                    - First read the attached file(s), then analyze the data structure (columns, types, sample data).
+                     - Plan the SQL operations based on the data.
+                     - Execute the operations and verify results.
++                    - You may ONLY use file#N numbers that actually appear in the conversation. Never guess or fabricate a file ID.
+                     """);
+         }
+ 
+         sb.append("\n## Database Schema\n").append(dbDoc);
+         return sb.toString();
+     }
+ 
+     private static String buildNextStepPrompt(boolean hasFiles) {
+         if (hasFiles) {
+             return "Continue with the workflow. If the file has been parsed, proceed to process the data. If data has been inserted, verify it. When everything is done and verified, call doTerminate.";
+diff --git a/db-genius-agent/src/main/java/com/dbgenius/agent/ToolCallAgent.java b/db-genius-agent/src/main/java/com/dbgenius/agent/ToolCallAgent.java
+index 690dcc8..d575bbc 100644
+--- a/db-genius-agent/src/main/java/com/dbgenius/agent/ToolCallAgent.java
++++ b/db-genius-agent/src/main/java/com/dbgenius/agent/ToolCallAgent.java
+@@ -13,43 +13,55 @@ import org.springframework.ai.chat.prompt.ChatOptions;
+ import org.springframework.ai.chat.prompt.Prompt;
+ import org.springframework.ai.model.tool.ToolCallingChatOptions;
+ import org.springframework.ai.model.tool.ToolCallingManager;
+ import org.springframework.ai.model.tool.ToolExecutionResult;
+ import org.springframework.ai.support.ToolCallbacks;
+ import org.springframework.ai.tool.ToolCallback;
+ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+ 
+ import java.util.ArrayList;
+ import java.util.List;
++import java.util.Map;
+ import java.util.stream.Collectors;
+ 
+ @Slf4j
+ public class ToolCallAgent extends ReActAgent {
+ 
+     protected final ToolCallback[] availableTools;
+     protected final ChatClient chatClient;
+     protected final ToolCallingManager toolCallingManager;
+     protected final ChatOptions chatOptions;
+ 
+     private ChatResponse toolCallChatResponse;
+ 
+     public ToolCallAgent(String name, String systemPrompt, String nextStepPrompt,
+                          int maxSteps, ChatClient chatClient, Object... toolObjects) {
++        this(name, systemPrompt, nextStepPrompt, maxSteps, chatClient, null, toolObjects);
++    }
++
++    public ToolCallAgent(String name, String systemPrompt, String nextStepPrompt,
++                         int maxSteps, ChatClient chatClient,
++                         Map<String, Object> toolContext, Object... toolObjects) {
+         super(name, maxSteps);
+         this.systemPrompt = systemPrompt;
+         this.nextStepPrompt = nextStepPrompt;
+         this.chatClient = chatClient;
+         this.availableTools = ToolCallbacks.from(toolObjects);
+         this.toolCallingManager = ToolCallingManager.builder().build();
+-        this.chatOptions = ToolCallingChatOptions.builder()
+-                .internalToolExecutionEnabled(false)
+-                .build();
++        ToolCallingChatOptions.Builder optionsBuilder = ToolCallingChatOptions.builder()
++                .internalToolExecutionEnabled(false);
++        if (toolContext != null) {
++            // toolContext 随 chatOptions 进入 Prompt，executeToolCalls 时自动传给声明了
++            // ToolContext 参数的 @Tool 方法（LLM 不可见）
++            optionsBuilder.toolContext(toolContext);
++        }
++        this.chatOptions = optionsBuilder.build();
+     }
+ 
+     @Override
+     protected void onStepStart(SseEmitter emitter, String userPrompt) throws Exception {
+         if (!historyMessages.isEmpty()) {
+             messageList.addAll(historyMessages);
+         }
+         messageList.add(new UserMessage(userPrompt));
+         sendEvent(emitter, SseEvent.of(taskId, 0, "thinking", "Analyzing your request..."));
+     }
+diff --git a/db-genius-agent/src/main/java/com/dbgenius/agent/intent/WorkflowHandler.java b/db-genius-agent/src/main/java/com/dbgenius/agent/intent/WorkflowHandler.java
+index bc71984..669ed32 100644
+--- a/db-genius-agent/src/main/java/com/dbgenius/agent/intent/WorkflowHandler.java
++++ b/db-genius-agent/src/main/java/com/dbgenius/agent/intent/WorkflowHandler.java
+@@ -1,55 +1,61 @@
+ package com.dbgenius.agent.intent;
+ 
+ import com.dbgenius.agent.DbWorkflowAgent;
+-import com.dbgenius.agent.tool.ExcelParseTool;
++import com.dbgenius.agent.tool.FileReadTool;
++import com.dbgenius.agent.tool.ImageReadTool;
+ import com.dbgenius.agent.tool.SqlExecuteTool;
+ import com.dbgenius.agent.tool.TerminateTool;
++import com.dbgenius.agent.tool.file.FileAccessGuard;
+ import com.dbgenius.model.dto.UnifiedChatRequest;
+ import com.dbgenius.model.entity.Conversation;
+ import com.dbgenius.model.entity.Message;
++import com.dbgenius.model.entity.UploadedFile;
+ import com.dbgenius.model.enums.IntentType;
+ import com.dbgenius.model.vo.ConversationVO;
+ import com.dbgenius.model.vo.IntentClassificationResult;
+ import com.dbgenius.model.vo.SseEvent;
+ import com.dbgenius.service.ConversationService;
+ import com.dbgenius.service.DbConfigService;
+ import com.dbgenius.service.FileUploadService;
+ import com.dbgenius.trial.TrialGuard;
+ import com.fasterxml.jackson.databind.ObjectMapper;
+ import lombok.RequiredArgsConstructor;
+ import lombok.extern.slf4j.Slf4j;
+ import org.springframework.ai.chat.client.ChatClient;
+ import org.springframework.ai.chat.messages.AssistantMessage;
+ import org.springframework.ai.chat.messages.UserMessage;
+ import org.springframework.stereotype.Component;
+ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+ 
+ import java.io.IOException;
+ import java.util.ArrayList;
+ import java.util.List;
++import java.util.Map;
++import java.util.Set;
+ import java.util.stream.Collectors;
+ 
+ /**
+  * 复杂工作流处理器
+  */
+ @Slf4j
+ @Component
+ @RequiredArgsConstructor
+ public class WorkflowHandler implements IntentHandler {
+ 
+     private final ChatClient agentChatClient;
+     private final DbConfigService dbConfigService;
+     private final ConversationService conversationService;
+     private final FileUploadService fileUploadService;
+     private final SqlExecuteTool sqlExecuteTool;
+-    private final ExcelParseTool excelParseTool;
++    private final FileReadTool fileReadTool;
++    private final ImageReadTool imageReadTool;
+     private final TerminateTool terminateTool;
+     private final TrialGuard trialGuard;
+ 
+     private static final ObjectMapper objectMapper = new ObjectMapper();
+ 
+     private static final int HISTORY_SIZE = 10;
+ 
+     @Override
+     public IntentType supportedIntent() {
+         return IntentType.WORKFLOW;
+@@ -62,37 +68,48 @@ public class WorkflowHandler implements IntentHandler {
+         List<Long> dbConfigIds = request.getDbConfigIds();
+         if (dbConfigIds == null || dbConfigIds.isEmpty()) {
+             throw new IllegalArgumentException("工作流需要至少选择一个数据库配置");
+         }
+ 
+         validateDbConfigs(userId, dbConfigIds);
+         String dbDoc = buildDbDocContext(userId, dbConfigIds);
+ 
+         boolean hasFiles = request.getFileIds() != null && !request.getFileIds().isEmpty();
+         String enhancedMessage = request.getMessage();
++        Map<String, Object> toolContext = Map.of();
+         if (hasFiles) {
+-            List<String> filePaths = request.getFileIds().stream()
+-                    .map(fileUploadService::getFilePath)
++            // 入口属主校验：任一文件不属于该用户即抛 403/404，整个请求拒绝
++            List<UploadedFile> files = request.getFileIds().stream()
++                    .map(fileId -> fileUploadService.getOwnedFile(fileId, userId))
+                     .collect(Collectors.toList());
+-            enhancedMessage += "\n\n[Attached files: " + String.join(", ", filePaths) + "]";
++            // 提示词只出现 [file#N: 原名] 逻辑引用，不出现任何路径/OSS key
++            String fileRefs = files.stream()
++                    .map(f -> "[file#" + f.getId() + ": " + f.getOriginalName() + "]")
++                    .collect(Collectors.joining(", "));
++            enhancedMessage += "\n\n[Attached files: " + fileRefs + "]";
++            // userId 与允许访问的文件集合经 ToolContext 在 LLM 上下文之外传递给 readFile/readImage
++            toolContext = Map.of(
++                    FileAccessGuard.CONTEXT_USER_ID, userId,
++                    FileAccessGuard.CONTEXT_ALLOWED_FILE_IDS, Set.copyOf(request.getFileIds()));
+         }
+ 
+         ConversationVO conversation = getOrCreateConversation(userId, request, dbConfigIds);
+         sendEvent(emitter, SseEvent.of(taskId, 0, "conversation", conversation.getId()));
+ 
+         // 先取历史再保存本轮用户消息，避免把当前消息重复塞进历史
+         List<org.springframework.ai.chat.messages.Message> historyMessages =
+                 toHistoryMessages(conversationService.getRecentMessages(conversation.getId(), HISTORY_SIZE));
+         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
+ 
+         DbWorkflowAgent agent = new DbWorkflowAgent(
+-                agentChatClient, sqlExecuteTool, excelParseTool, terminateTool, dbDoc, hasFiles);
++                agentChatClient, sqlExecuteTool, fileReadTool, imageReadTool, terminateTool,
++                dbDoc, hasFiles, toolContext);
+         agent.setHistoryMessages(historyMessages);
+         agent.setSummaryCallback(markdown ->
+                 conversationService.saveMessage(conversation.getId(), "assistant", markdown, -1, "summary"));
+         agent.runStream(enhancedMessage, taskId, emitter);
+     }
+ 
+     private void validateDbConfigs(Long userId, List<Long> dbConfigIds) {
+         for (Long configId : dbConfigIds) {
+             dbConfigService.validateConfigForChat(userId, configId);
+         }
+diff --git a/db-genius-agent/src/main/java/com/dbgenius/agent/tool/ExcelParseTool.java b/db-genius-agent/src/main/java/com/dbgenius/agent/tool/ExcelParseTool.java
+deleted file mode 100644
+index 9ec5ba5..0000000
+--- a/db-genius-agent/src/main/java/com/dbgenius/agent/tool/ExcelParseTool.java
++++ /dev/null
+@@ -1,79 +0,0 @@
+-package com.dbgenius.agent.tool;
+-
+-import com.alibaba.excel.EasyExcel;
+-import com.alibaba.excel.context.AnalysisContext;
+-import com.alibaba.excel.event.AnalysisEventListener;
+-import com.fasterxml.jackson.databind.ObjectMapper;
+-import lombok.RequiredArgsConstructor;
+-import lombok.extern.slf4j.Slf4j;
+-import org.springframework.ai.tool.annotation.Tool;
+-import org.springframework.ai.tool.annotation.ToolParam;
+-import org.springframework.stereotype.Component;
+-
+-import java.util.*;
+-
+-@Slf4j
+-@Component
+-@RequiredArgsConstructor
+-public class ExcelParseTool {
+-
+-    private static final ObjectMapper objectMapper = new ObjectMapper();
+-
+-    @Tool(description = "Parse an Excel file and return its content as JSON. The file path must be an absolute path to an .xlsx or .xls file.")
+-    public String parseExcel(
+-            @ToolParam(description = "Absolute path to the Excel file") String filePath) {
+-        log.info("Parsing Excel file: {}", filePath);
+-
+-        try {
+-            List<Map<String, Object>> allRows = new ArrayList<>();
+-            List<String> headers = new ArrayList<>();
+-
+-            EasyExcel.read(filePath, new AnalysisEventListener<Map<Integer, String>>() {
+-                @Override
+-                public void invokeHeadMap(Map<Integer, String> headMap, AnalysisContext context) {
+-                    headers.clear();
+-                    int maxIndex = headMap.keySet().stream().mapToInt(Integer::intValue).max().orElse(-1);
+-                    for (int i = 0; i <= maxIndex; i++) {
+-                        headers.add(headMap.getOrDefault(i, "column_" + i));
+-                    }
+-                }
+-
+-                @Override
+-                public void invoke(Map<Integer, String> data, AnalysisContext context) {
+-                    Map<String, Object> row = new LinkedHashMap<>();
+-                    for (int i = 0; i < headers.size(); i++) {
+-                        row.put(headers.get(i), data.getOrDefault(i, null));
+-                    }
+-                    allRows.add(row);
+-                }
+-
+-                @Override
+-                public void doAfterAllAnalysed(AnalysisContext context) {
+-                    log.info("Excel parsing complete, {} rows read", allRows.size());
+-                }
+-            }).sheet().doRead();
+-
+-            Map<String, Object> result = new LinkedHashMap<>();
+-            result.put("success", true);
+-            result.put("fileName", filePath);
+-            result.put("headers", headers);
+-            result.put("totalRows", allRows.size());
+-            result.put("data", allRows.size() > 200 ? allRows.subList(0, 200) : allRows);
+-            if (allRows.size() > 200) {
+-                result.put("truncated", true);
+-                result.put("message", "Only first 200 rows returned. Total: " + allRows.size());
+-            }
+-            return objectMapper.writeValueAsString(result);
+-        } catch (Exception e) {
+-            log.error("Excel parsing failed", e);
+-            Map<String, Object> result = new LinkedHashMap<>();
+-            result.put("success", false);
+-            result.put("error", "Failed to parse Excel: " + e.getMessage());
+-            try {
+-                return objectMapper.writeValueAsString(result);
+-            } catch (Exception ex) {
+-                return "Error: " + e.getMessage();
+-            }
+-        }
+-    }
+-}
+diff --git a/db-genius-model/src/main/java/com/dbgenius/model/entity/UploadedFile.java b/db-genius-model/src/main/java/com/dbgenius/model/entity/UploadedFile.java
+index ff64578..ec6a06b 100644
+--- a/db-genius-model/src/main/java/com/dbgenius/model/entity/UploadedFile.java
++++ b/db-genius-model/src/main/java/com/dbgenius/model/entity/UploadedFile.java
+@@ -9,19 +9,19 @@ import java.time.LocalDateTime;
+ @TableName("uploaded_file")
+ public class UploadedFile {
+ 
+     @TableId(type = IdType.AUTO)
+     private Long id;
+ 
+     private Long userId;
+ 
+     private String originalName;
+ 
+-    private String storedPath;
++    private String ossKey;
+ 
+     private Long fileSize;
+ 
+     private String contentType;
+ 
+     @TableField(fill = FieldFill.INSERT)
+     private LocalDateTime createdAt;
+ }
+diff --git a/db-genius-service/pom.xml b/db-genius-service/pom.xml
+index 3cc63a2..cf8c973 100644
+--- a/db-genius-service/pom.xml
++++ b/db-genius-service/pom.xml
+@@ -24,20 +24,24 @@
+             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+         </dependency>
+         <dependency>
+             <groupId>cn.dev33</groupId>
+             <artifactId>sa-token-spring-boot3-starter</artifactId>
+         </dependency>
+         <dependency>
+             <groupId>com.alibaba</groupId>
+             <artifactId>easyexcel</artifactId>
+         </dependency>
++        <dependency>
++            <groupId>com.aliyun.oss</groupId>
++            <artifactId>aliyun-sdk-oss</artifactId>
++        </dependency>
+         <dependency>
+             <groupId>org.springframework.boot</groupId>
+             <artifactId>spring-boot-starter-jdbc</artifactId>
+         </dependency>
+         <dependency>
+             <groupId>org.springframework.boot</groupId>
+             <artifactId>spring-boot-starter-amqp</artifactId>
+         </dependency>
+         <dependency>
+             <groupId>com.mysql</groupId>
+diff --git a/db-genius-service/src/main/java/com/dbgenius/service/FileUploadService.java b/db-genius-service/src/main/java/com/dbgenius/service/FileUploadService.java
+index 371bfd3..2c0b82f 100644
+--- a/db-genius-service/src/main/java/com/dbgenius/service/FileUploadService.java
++++ b/db-genius-service/src/main/java/com/dbgenius/service/FileUploadService.java
+@@ -1,12 +1,22 @@
+ package com.dbgenius.service;
+ 
+ import com.baomidou.mybatisplus.extension.service.IService;
+ import com.dbgenius.model.entity.UploadedFile;
+ import org.springframework.web.multipart.MultipartFile;
+ 
++import java.io.InputStream;
++
+ public interface FileUploadService extends IService<UploadedFile> {
+ 
+     UploadedFile uploadFile(Long userId, MultipartFile file);
+ 
+-    String getFilePath(Long fileId);
++    /**
++     * 查库并校验属主：文件不存在抛 404，不属于该用户抛 403
++     */
++    UploadedFile getOwnedFile(Long fileId, Long userId);
++
++    /**
++     * 打开文件内容流（委托 OSS），调用方负责关闭
++     */
++    InputStream openStream(UploadedFile file);
+ }
+diff --git a/db-genius-service/src/main/java/com/dbgenius/service/impl/FileUploadServiceImpl.java b/db-genius-service/src/main/java/com/dbgenius/service/impl/FileUploadServiceImpl.java
+index e047482..935105a 100644
+--- a/db-genius-service/src/main/java/com/dbgenius/service/impl/FileUploadServiceImpl.java
++++ b/db-genius-service/src/main/java/com/dbgenius/service/impl/FileUploadServiceImpl.java
+@@ -1,71 +1,83 @@
+ package com.dbgenius.service.impl;
+ 
+ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+ import com.dbgenius.common.exception.BusinessException;
+ import com.dbgenius.mapper.UploadedFileMapper;
++import com.dbgenius.model.constant.FileTypes;
+ import com.dbgenius.model.entity.UploadedFile;
+ import com.dbgenius.service.FileUploadService;
++import com.dbgenius.service.OssService;
++import com.dbgenius.service.config.OssProperties;
+ import com.dbgenius.trial.TrialGuard;
+ import lombok.RequiredArgsConstructor;
+-import org.springframework.beans.factory.annotation.Value;
+ import org.springframework.stereotype.Service;
+ import org.springframework.web.multipart.MultipartFile;
+ 
+ import java.io.IOException;
+-import java.nio.file.Files;
+-import java.nio.file.Path;
+-import java.nio.file.Paths;
++import java.io.InputStream;
+ import java.util.UUID;
+ 
+ @Service
+ @RequiredArgsConstructor
+ public class FileUploadServiceImpl extends ServiceImpl<UploadedFileMapper, UploadedFile> implements FileUploadService {
+ 
+     private final TrialGuard trialGuard;
+-
+-    @Value("${db-genius.file-upload-dir}")
+-    private String uploadDir;
++    private final OssService ossService;
++    private final OssProperties ossProperties;
+ 
+     @Override
+     public UploadedFile uploadFile(Long userId, MultipartFile file) {
+         trialGuard.denyIfTrial("试用版暂不支持文件上传");
+         if (file.isEmpty()) {
+             throw new BusinessException("File is empty");
+         }
+ 
+-        try {
+-            Path dirPath = Paths.get(uploadDir);
+-            Files.createDirectories(dirPath);
+-
+-            String originalName = file.getOriginalFilename();
+-            String extension = "";
+-            if (originalName != null && originalName.contains(".")) {
+-                extension = originalName.substring(originalName.lastIndexOf("."));
+-            }
+-            String storedName = UUID.randomUUID() + extension;
+-            Path storedPath = dirPath.resolve(storedName);
+-            file.transferTo(storedPath.toFile());
++        String originalName = file.getOriginalFilename();
++        if (!FileTypes.isAllowed(originalName)) {
++            throw new BusinessException("Unsupported file type, allowed: documents "
++                    + FileTypes.DOC_EXTENSIONS + ", images " + FileTypes.IMAGE_EXTENSIONS);
++        }
++        if (file.getSize() > FileTypes.MAX_FILE_SIZE) {
++            throw new BusinessException("File too large, max " + (FileTypes.MAX_FILE_SIZE / 1024 / 1024) + "MB");
++        }
+ 
+-            UploadedFile uploadedFile = new UploadedFile();
+-            uploadedFile.setUserId(userId);
+-            uploadedFile.setOriginalName(originalName);
+-            uploadedFile.setStoredPath(storedPath.toString());
+-            uploadedFile.setFileSize(file.getSize());
+-            uploadedFile.setContentType(file.getContentType());
+-            save(uploadedFile);
++        String dirPrefix = ossProperties.getDirPrefix();
++        if (!dirPrefix.endsWith("/")) {
++            dirPrefix += "/";
++        }
++        String ossKey = dirPrefix + userId + "/" + UUID.randomUUID() + "." + FileTypes.getExtension(originalName);
+ 
+-            return uploadedFile;
++        try (InputStream in = file.getInputStream()) {
++            ossService.upload(ossKey, in, file.getSize(), file.getContentType());
+         } catch (IOException e) {
+             throw new BusinessException("File upload failed: " + e.getMessage());
+         }
++
++        UploadedFile uploadedFile = new UploadedFile();
++        uploadedFile.setUserId(userId);
++        uploadedFile.setOriginalName(originalName);
++        uploadedFile.setOssKey(ossKey);
++        uploadedFile.setFileSize(file.getSize());
++        uploadedFile.setContentType(file.getContentType());
++        save(uploadedFile);
++
++        return uploadedFile;
+     }
+ 
+     @Override
+-    public String getFilePath(Long fileId) {
++    public UploadedFile getOwnedFile(Long fileId, Long userId) {
+         UploadedFile file = getById(fileId);
+         if (file == null) {
+             throw new BusinessException(404, "File not found");
+         }
+-        return file.getStoredPath();
++        if (!file.getUserId().equals(userId)) {
++            throw new BusinessException(403, "No permission to access this file");
++        }
++        return file;
++    }
++
++    @Override
++    public InputStream openStream(UploadedFile file) {
++        return ossService.download(file.getOssKey());
+     }
+ }
+diff --git a/db-genius-web/src/main/java/com/dbgenius/controller/FileController.java b/db-genius-web/src/main/java/com/dbgenius/controller/FileController.java
+index f100a3e..835c5fd 100644
+--- a/db-genius-web/src/main/java/com/dbgenius/controller/FileController.java
++++ b/db-genius-web/src/main/java/com/dbgenius/controller/FileController.java
+@@ -1,22 +1,22 @@
+ package com.dbgenius.controller;
+ 
+ import cn.dev33.satoken.stp.StpUtil;
+ import com.dbgenius.common.result.R;
+-import com.dbgenius.model.entity.UploadedFile;
++import com.dbgenius.model.vo.UploadedFileVO;
+ import com.dbgenius.service.FileUploadService;
+ import lombok.RequiredArgsConstructor;
+ import org.springframework.web.bind.annotation.*;
+ import org.springframework.web.multipart.MultipartFile;
+ 
+ @RestController
+ @RequestMapping("/file")
+ @RequiredArgsConstructor
+ public class FileController {
+ 
+     private final FileUploadService fileUploadService;
+ 
+     @PostMapping("/upload")
+-    public R<UploadedFile> upload(@RequestParam("file") MultipartFile file) {
+-        return R.ok(fileUploadService.uploadFile(StpUtil.getLoginIdAsLong(), file));
++    public R<UploadedFileVO> upload(@RequestParam("file") MultipartFile file) {
++        return R.ok(UploadedFileVO.from(fileUploadService.uploadFile(StpUtil.getLoginIdAsLong(), file)));
+     }
+ }
+diff --git a/db-genius-web/src/main/resources/application.yml b/db-genius-web/src/main/resources/application.yml
+index 2b4aaab..9d9bb52 100644
+--- a/db-genius-web/src/main/resources/application.yml
++++ b/db-genius-web/src/main/resources/application.yml
+@@ -52,21 +52,29 @@ sa-token:
+   timeout: 86400
+   active-timeout: 3600
+   is-concurrent: true
+   is-share: true
+   token-style: uuid
+   is-log: false
+   is-read-header: true
+ 
+ db-genius:
+   encrypt-key: ${DB_GENIUS_ENCRYPT_KEY:default-encrypt-key-change-in-production!!}
+-  file-upload-dir: ${DB_GENIUS_FILE_DIR:/tmp/db-genius/uploads}
++  oss:
++    endpoint: ${ALIYUN_OSS_ENDPOINT:}
++    bucket: ${ALIYUN_OSS_BUCKET:}
++    access-key-id: ${ALIYUN_ACCESS_KEY_ID:}
++    access-key-secret: ${ALIYUN_ACCESS_KEY_SECRET:}
++    dir-prefix: ${ALIYUN_OSS_DIR_PREFIX:uploads/}
++  ocr:
++    enabled: ${ALIYUN_OCR_ENABLED:false}
++    endpoint: ${ALIYUN_OCR_ENDPOINT:ocr.cn-hangzhou.aliyuncs.com}
+   trial:
+     enabled: ${DB_GENIUS_TRIAL_ENABLED:false}
+     builtin-db-name: ${DB_GENIUS_TRIAL_BUILTIN_DB_NAME:db-genius}
+     builtin-host: ${DB_GENIUS_TRIAL_BUILTIN_HOST:}
+     builtin-port: ${DB_GENIUS_TRIAL_BUILTIN_PORT:3306}
+     builtin-username: ${DB_GENIUS_TRIAL_BUILTIN_USERNAME:}
+     builtin-password: ${DB_GENIUS_TRIAL_BUILTIN_PASSWORD:}
+ 
+ logging:
+   level:
+diff --git a/db-genius-web/src/main/resources/db/schema.sql b/db-genius-web/src/main/resources/db/schema.sql
+index 889ba9d..abbc3a0 100644
+--- a/db-genius-web/src/main/resources/db/schema.sql
++++ b/db-genius-web/src/main/resources/db/schema.sql
+@@ -52,21 +52,21 @@ CREATE TABLE IF NOT EXISTS message (
+     step INT,
+     type VARCHAR(32),
+     file_url TEXT,
+     created_at TIMESTAMP NOT NULL DEFAULT NOW()
+ );
+ 
+ CREATE TABLE IF NOT EXISTS uploaded_file (
+     id BIGSERIAL PRIMARY KEY,
+     user_id BIGINT NOT NULL REFERENCES sys_user(id),
+     original_name VARCHAR(256) NOT NULL,
+-    stored_path TEXT NOT NULL,
++    oss_key VARCHAR(512) NOT NULL,
+     file_size BIGINT,
+     content_type VARCHAR(128),
+     created_at TIMESTAMP NOT NULL DEFAULT NOW()
+ );
+ 
+ CREATE TABLE IF NOT EXISTS sales_contact (
+     id BIGSERIAL PRIMARY KEY,
+     company_name VARCHAR(256) NOT NULL,
+     contact VARCHAR(256) NOT NULL,
+     remark TEXT,
+diff --git a/deploy/.env.example b/deploy/.env.example
+index d511d84..b406d01 100644
+--- a/deploy/.env.example
++++ b/deploy/.env.example
+@@ -17,22 +17,33 @@ SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/db_genius?currentSchema=a
+ SPRING_DATASOURCE_USERNAME=postgres
+ SPRING_DATASOURCE_PASSWORD=postgres
+ 
+ # DeepSeek API Key，必须真实有效
+ DEEPSEEK_API_KEY=sk-your-real-deepseek-api-key
+ 
+ # AES-256 加密密钥，必须刚好 32 个字符
+ # 生成后请勿随意修改，否则已加密的数据库密码将无法解密
+ DB_GENIUS_ENCRYPT_KEY=your-32-character-secret-key!!!!
+ 
+-# 文件上传目录
+-DB_GENIUS_FILE_DIR=/opt/db-genius/uploads
++# 阿里云 OSS（文件上传存储，必填）
++# RAM 子账号最小授权：该 bucket 的读写 + OCR 调用
++ALIYUN_OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
++ALIYUN_OSS_BUCKET=your-bucket-name
++ALIYUN_ACCESS_KEY_ID=your-access-key-id
++ALIYUN_ACCESS_KEY_SECRET=your-access-key-secret
++# OSS 对象 key 统一前缀（可选，默认 uploads/）
++ALIYUN_OSS_DIR_PREFIX=uploads/
++
++# 阿里云 OCR 图片文字识别（可选，默认关闭）
++ALIYUN_OCR_ENABLED=false
++# OCR endpoint（可选，默认 ocr.cn-hangzhou.aliyuncs.com）
++ALIYUN_OCR_ENDPOINT=ocr.cn-hangzhou.aliyuncs.com
+ 
+ # 试用版模式（可选）
+ DB_GENIUS_TRIAL_ENABLED=false
+ DB_GENIUS_TRIAL_BUILTIN_HOST=
+ DB_GENIUS_TRIAL_BUILTIN_PORT=3306
+ DB_GENIUS_TRIAL_BUILTIN_DB_NAME=db-genius
+ DB_GENIUS_TRIAL_BUILTIN_USERNAME=
+ DB_GENIUS_TRIAL_BUILTIN_PASSWORD=
+ 
+ # RabbitMQ（异步验证数据库配置并生成文档，默认本机）
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 1c79300..be751be 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -10,35 +10,38 @@ services:
+       SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
+       SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+       # RabbitMQ 与 app 同在 compose 网络，用服务名互连（不是 localhost）
+       SPRING_RABBITMQ_HOST: rabbitmq
+       SPRING_RABBITMQ_PORT: 5672
+       SPRING_RABBITMQ_USERNAME: ${SPRING_RABBITMQ_USERNAME:-guest}
+       SPRING_RABBITMQ_PASSWORD: ${SPRING_RABBITMQ_PASSWORD:-guest}
+       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+       DB_GENIUS_ENCRYPT_KEY: ${DB_GENIUS_ENCRYPT_KEY}
+-      DB_GENIUS_FILE_DIR: /app/uploads
++      ALIYUN_OSS_ENDPOINT: ${ALIYUN_OSS_ENDPOINT}
++      ALIYUN_OSS_BUCKET: ${ALIYUN_OSS_BUCKET}
++      ALIYUN_ACCESS_KEY_ID: ${ALIYUN_ACCESS_KEY_ID}
++      ALIYUN_ACCESS_KEY_SECRET: ${ALIYUN_ACCESS_KEY_SECRET}
++      ALIYUN_OSS_DIR_PREFIX: ${ALIYUN_OSS_DIR_PREFIX:-uploads/}
++      ALIYUN_OCR_ENABLED: ${ALIYUN_OCR_ENABLED:-false}
++      ALIYUN_OCR_ENDPOINT: ${ALIYUN_OCR_ENDPOINT:-ocr.cn-hangzhou.aliyuncs.com}
+       DB_GENIUS_TRIAL_ENABLED: ${DB_GENIUS_TRIAL_ENABLED:-false}
+-    volumes:
+-      - uploads:/app/uploads
+     depends_on:
+       rabbitmq:
+         condition: service_healthy
+     restart: unless-stopped
+ 
+   rabbitmq:
+     image: rabbitmq:3.13-management-alpine
+     ports:
+       - "5672:5672"
+       - "15672:15672"
+     volumes:
+       - rabbitmqdata:/var/lib/rabbitmq
+     healthcheck:
+       test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+       interval: 10s
+       timeout: 5s
+       retries: 5
+ 
+ volumes:
+   rabbitmqdata:
+-  uploads:
+diff --git a/pom.xml b/pom.xml
+index e5784fc..278b9f9 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -30,20 +30,24 @@
+         <java.version>21</java.version>
+         <maven.compiler.source>21</maven.compiler.source>
+         <maven.compiler.target>21</maven.compiler.target>
+         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+ 
+         <spring-ai.version>1.1.8</spring-ai.version>
+         <mybatis-plus.version>3.5.9</mybatis-plus.version>
+         <sa-token.version>1.39.0</sa-token.version>
+         <hutool.version>5.8.37</hutool.version>
+         <easyexcel.version>4.0.3</easyexcel.version>
++        <aliyun-oss.version>3.17.4</aliyun-oss.version>
++        <aliyun-ocr.version>3.1.3</aliyun-ocr.version>
++        <pdfbox.version>3.0.3</pdfbox.version>
++        <poi.version>5.2.5</poi.version>
+     </properties>
+ 
+     <dependencyManagement>
+         <dependencies>
+             <!-- Spring AI BOM -->
+             <dependency>
+                 <groupId>org.springframework.ai</groupId>
+                 <artifactId>spring-ai-bom</artifactId>
+                 <version>${spring-ai.version}</version>
+                 <type>pom</type>
+@@ -92,20 +96,48 @@
+                 <artifactId>hutool-all</artifactId>
+                 <version>${hutool.version}</version>
+             </dependency>
+ 
+             <!-- EasyExcel -->
+             <dependency>
+                 <groupId>com.alibaba</groupId>
+                 <artifactId>easyexcel</artifactId>
+                 <version>${easyexcel.version}</version>
+             </dependency>
++
++            <!-- Aliyun OSS -->
++            <dependency>
++                <groupId>com.aliyun.oss</groupId>
++                <artifactId>aliyun-sdk-oss</artifactId>
++                <version>${aliyun-oss.version}</version>
++            </dependency>
++
++            <!-- Aliyun OCR（图片文字识别） -->
++            <dependency>
++                <groupId>com.aliyun</groupId>
++                <artifactId>ocr_api20210707</artifactId>
++                <version>${aliyun-ocr.version}</version>
++            </dependency>
++
++            <!-- PDFBox -->
++            <dependency>
++                <groupId>org.apache.pdfbox</groupId>
++                <artifactId>pdfbox</artifactId>
++                <version>${pdfbox.version}</version>
++            </dependency>
++
++            <!-- Apache POI (docx 解析，显式 pin 对齐 EasyExcel 传递版本) -->
++            <dependency>
++                <groupId>org.apache.poi</groupId>
++                <artifactId>poi-ooxml</artifactId>
++                <version>${poi.version}</version>
++            </dependency>
+         </dependencies>
+     </dependencyManagement>
+ 
+     <dependencies>
+         <dependency>
+             <groupId>org.projectlombok</groupId>
+             <artifactId>lombok</artifactId>
+             <optional>true</optional>
+         </dependency>
+     </dependencies>

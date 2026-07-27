@@ -20,6 +20,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -34,15 +35,26 @@ public class ToolCallAgent extends ReActAgent {
 
     public ToolCallAgent(String name, String systemPrompt, String nextStepPrompt,
                          int maxSteps, ChatClient chatClient, Object... toolObjects) {
+        this(name, systemPrompt, nextStepPrompt, maxSteps, chatClient, null, toolObjects);
+    }
+
+    public ToolCallAgent(String name, String systemPrompt, String nextStepPrompt,
+                         int maxSteps, ChatClient chatClient,
+                         Map<String, Object> toolContext, Object... toolObjects) {
         super(name, maxSteps);
         this.systemPrompt = systemPrompt;
         this.nextStepPrompt = nextStepPrompt;
         this.chatClient = chatClient;
         this.availableTools = ToolCallbacks.from(toolObjects);
         this.toolCallingManager = ToolCallingManager.builder().build();
-        this.chatOptions = ToolCallingChatOptions.builder()
-                .internalToolExecutionEnabled(false)
-                .build();
+        ToolCallingChatOptions.Builder optionsBuilder = ToolCallingChatOptions.builder()
+                .internalToolExecutionEnabled(false);
+        if (toolContext != null) {
+            // toolContext 随 chatOptions 进入 Prompt，executeToolCalls 时自动传给声明了
+            // ToolContext 参数的 @Tool 方法（LLM 不可见）
+            optionsBuilder.toolContext(toolContext);
+        }
+        this.chatOptions = optionsBuilder.build();
     }
 
     @Override

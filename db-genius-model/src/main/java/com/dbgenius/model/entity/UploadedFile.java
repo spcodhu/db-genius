@@ -16,7 +16,7 @@ public class UploadedFile {
 
     private String originalName;
 
-    private String storedPath;
+    private String ossKey;
 
     private Long fileSize;
 

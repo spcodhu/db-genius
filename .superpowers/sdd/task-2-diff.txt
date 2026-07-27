@@ -1,0 +1,199 @@
+diff --git a/db-genius-agent/pom.xml b/db-genius-agent/pom.xml
+index c6d45f3..e1f8903 100644
+--- a/db-genius-agent/pom.xml
++++ b/db-genius-agent/pom.xml
+@@ -16,19 +16,31 @@
+ 
+     <dependencies>
+         <dependency>
+             <groupId>com.dbgenius</groupId>
+             <artifactId>db-genius-service</artifactId>
+         </dependency>
+         <dependency>
+             <groupId>org.springframework.ai</groupId>
+             <artifactId>spring-ai-starter-model-openai</artifactId>
+         </dependency>
++        <dependency>
++            <groupId>org.apache.pdfbox</groupId>
++            <artifactId>pdfbox</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.apache.poi</groupId>
++            <artifactId>poi-ooxml</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>com.aliyun</groupId>
++            <artifactId>ocr_api20210707</artifactId>
++        </dependency>
+ 
+         <!-- Test -->
+         <dependency>
+             <groupId>org.springframework.boot</groupId>
+             <artifactId>spring-boot-starter-test</artifactId>
+             <scope>test</scope>
+         </dependency>
+     </dependencies>
+ </project>
+diff --git a/db-genius-agent/src/main/java/com/dbgenius/agent/tool/ExcelParseTool.java b/db-genius-agent/src/main/java/com/dbgenius/agent/tool/ExcelParseTool.java
+deleted file mode 100644
+index 9ec5ba5..0000000
+--- a/db-genius-agent/src/main/java/com/dbgenius/agent/tool/ExcelParseTool.java
++++ /dev/null
+@@ -1,79 +0,0 @@
+-package com.dbgenius.agent.tool;
+-
+-import com.alibaba.excel.EasyExcel;
+-import com.alibaba.excel.context.AnalysisContext;
+-import com.alibaba.excel.event.AnalysisEventListener;
+-import com.fasterxml.jackson.databind.ObjectMapper;
+-import lombok.RequiredArgsConstructor;
+-import lombok.extern.slf4j.Slf4j;
+-import org.springframework.ai.tool.annotation.Tool;
+-import org.springframework.ai.tool.annotation.ToolParam;
+-import org.springframework.stereotype.Component;
+-
+-import java.util.*;
+-
+-@Slf4j
+-@Component
+-@RequiredArgsConstructor
+-public class ExcelParseTool {
+-
+-    private static final ObjectMapper objectMapper = new ObjectMapper();
+-
+-    @Tool(description = "Parse an Excel file and return its content as JSON. The file path must be an absolute path to an .xlsx or .xls file.")
+-    public String parseExcel(
+-            @ToolParam(description = "Absolute path to the Excel file") String filePath) {
+-        log.info("Parsing Excel file: {}", filePath);
+-
+-        try {
+-            List<Map<String, Object>> allRows = new ArrayList<>();
+-            List<String> headers = new ArrayList<>();
+-
+-            EasyExcel.read(filePath, new AnalysisEventListener<Map<Integer, String>>() {
+-                @Override
+-                public void invokeHeadMap(Map<Integer, String> headMap, AnalysisContext context) {
+-                    headers.clear();
+-                    int maxIndex = headMap.keySet().stream().mapToInt(Integer::intValue).max().orElse(-1);
+-                    for (int i = 0; i <= maxIndex; i++) {
+-                        headers.add(headMap.getOrDefault(i, "column_" + i));
+-                    }
+-                }
+-
+-                @Override
+-                public void invoke(Map<Integer, String> data, AnalysisContext context) {
+-                    Map<String, Object> row = new LinkedHashMap<>();
+-                    for (int i = 0; i < headers.size(); i++) {
+-                        row.put(headers.get(i), data.getOrDefault(i, null));
+-                    }
+-                    allRows.add(row);
+-                }
+-
+-                @Override
+-                public void doAfterAllAnalysed(AnalysisContext context) {
+-                    log.info("Excel parsing complete, {} rows read", allRows.size());
+-                }
+-            }).sheet().doRead();
+-
+-            Map<String, Object> result = new LinkedHashMap<>();
+-            result.put("success", true);
+-            result.put("fileName", filePath);
+-            result.put("headers", headers);
+-            result.put("totalRows", allRows.size());
+-            result.put("data", allRows.size() > 200 ? allRows.subList(0, 200) : allRows);
+-            if (allRows.size() > 200) {
+-                result.put("truncated", true);
+-                result.put("message", "Only first 200 rows returned. Total: " + allRows.size());
+-            }
+-            return objectMapper.writeValueAsString(result);
+-        } catch (Exception e) {
+-            log.error("Excel parsing failed", e);
+-            Map<String, Object> result = new LinkedHashMap<>();
+-            result.put("success", false);
+-            result.put("error", "Failed to parse Excel: " + e.getMessage());
+-            try {
+-                return objectMapper.writeValueAsString(result);
+-            } catch (Exception ex) {
+-                return "Error: " + e.getMessage();
+-            }
+-        }
+-    }
+-}
+diff --git a/pom.xml b/pom.xml
+index e5784fc..278b9f9 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -30,20 +30,24 @@
+         <java.version>21</java.version>
+         <maven.compiler.source>21</maven.compiler.source>
+         <maven.compiler.target>21</maven.compiler.target>
+         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+ 
+         <spring-ai.version>1.1.8</spring-ai.version>
+         <mybatis-plus.version>3.5.9</mybatis-plus.version>
+         <sa-token.version>1.39.0</sa-token.version>
+         <hutool.version>5.8.37</hutool.version>
+         <easyexcel.version>4.0.3</easyexcel.version>
++        <aliyun-oss.version>3.17.4</aliyun-oss.version>
++        <aliyun-ocr.version>3.1.3</aliyun-ocr.version>
++        <pdfbox.version>3.0.3</pdfbox.version>
++        <poi.version>5.2.5</poi.version>
+     </properties>
+ 
+     <dependencyManagement>
+         <dependencies>
+             <!-- Spring AI BOM -->
+             <dependency>
+                 <groupId>org.springframework.ai</groupId>
+                 <artifactId>spring-ai-bom</artifactId>
+                 <version>${spring-ai.version}</version>
+                 <type>pom</type>
+@@ -92,20 +96,48 @@
+                 <artifactId>hutool-all</artifactId>
+                 <version>${hutool.version}</version>
+             </dependency>
+ 
+             <!-- EasyExcel -->
+             <dependency>
+                 <groupId>com.alibaba</groupId>
+                 <artifactId>easyexcel</artifactId>
+                 <version>${easyexcel.version}</version>
+             </dependency>
++
++            <!-- Aliyun OSS -->
++            <dependency>
++                <groupId>com.aliyun.oss</groupId>
++                <artifactId>aliyun-sdk-oss</artifactId>
++                <version>${aliyun-oss.version}</version>
++            </dependency>
++
++            <!-- Aliyun OCR（图片文字识别） -->
++            <dependency>
++                <groupId>com.aliyun</groupId>
++                <artifactId>ocr_api20210707</artifactId>
++                <version>${aliyun-ocr.version}</version>
++            </dependency>
++
++            <!-- PDFBox -->
++            <dependency>
++                <groupId>org.apache.pdfbox</groupId>
++                <artifactId>pdfbox</artifactId>
++                <version>${pdfbox.version}</version>
++            </dependency>
++
++            <!-- Apache POI (docx 解析，显式 pin 对齐 EasyExcel 传递版本) -->
++            <dependency>
++                <groupId>org.apache.poi</groupId>
++                <artifactId>poi-ooxml</artifactId>
++                <version>${poi.version}</version>
++            </dependency>
+         </dependencies>
+     </dependencyManagement>
+ 
+     <dependencies>
+         <dependency>
+             <groupId>org.projectlombok</groupId>
+             <artifactId>lombok</artifactId>
+             <optional>true</optional>
+         </dependency>
+     </dependencies>

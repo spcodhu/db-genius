@@ -17,10 +17,14 @@ services:
       SPRING_RABBITMQ_PASSWORD: ${SPRING_RABBITMQ_PASSWORD:-guest}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       DB_GENIUS_ENCRYPT_KEY: ${DB_GENIUS_ENCRYPT_KEY}
-      DB_GENIUS_FILE_DIR: /app/uploads
+      ALIYUN_OSS_ENDPOINT: ${ALIYUN_OSS_ENDPOINT}
+      ALIYUN_OSS_BUCKET: ${ALIYUN_OSS_BUCKET}
+      ALIYUN_ACCESS_KEY_ID: ${ALIYUN_ACCESS_KEY_ID}
+      ALIYUN_ACCESS_KEY_SECRET: ${ALIYUN_ACCESS_KEY_SECRET}
+      ALIYUN_OSS_DIR_PREFIX: ${ALIYUN_OSS_DIR_PREFIX:-uploads/}
+      ALIYUN_OCR_ENABLED: ${ALIYUN_OCR_ENABLED:-false}
+      ALIYUN_OCR_ENDPOINT: ${ALIYUN_OCR_ENDPOINT:-ocr-api.cn-hangzhou.aliyuncs.com}
       DB_GENIUS_TRIAL_ENABLED: ${DB_GENIUS_TRIAL_ENABLED:-false}
-    volumes:
-      - uploads:/app/uploads
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -41,4 +45,3 @@ services:
 
 volumes:
   rabbitmqdata:
-  uploads:

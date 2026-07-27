@@ -1,12 +1,15 @@
 package com.dbgenius.agent;
 
-import com.dbgenius.agent.tool.ExcelParseTool;
+import com.dbgenius.agent.tool.FileReadTool;
+import com.dbgenius.agent.tool.ImageReadTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
 import com.dbgenius.model.vo.SseEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import java.util.Map;
 
 @Slf4j
 public class DbWorkflowAgent extends ToolCallAgent {
@@ -15,16 +18,20 @@ public class DbWorkflowAgent extends ToolCallAgent {
     private final boolean hasFiles;
 
     public DbWorkflowAgent(ChatClient chatClient, SqlExecuteTool sqlExecuteTool,
-                           ExcelParseTool excelParseTool, TerminateTool terminateTool,
-                           String dbDocContext, boolean hasFiles) {
+                           FileReadTool fileReadTool, ImageReadTool imageReadTool,
+                           TerminateTool terminateTool,
+                           String dbDocContext, boolean hasFiles,
+                           Map<String, Object> toolContext) {
         super(
                 "DbWorkflowAgent",
                 buildSystemPrompt(dbDocContext, hasFiles),
                 buildNextStepPrompt(hasFiles),
                 20,
                 chatClient,
+                toolContext,
                 sqlExecuteTool,
-                excelParseTool,
+                fileReadTool,
+                imageReadTool,
                 terminateTool
         );
         this.dbDocContext = dbDocContext;
@@ -65,10 +72,12 @@ public class DbWorkflowAgent extends ToolCallAgent {
             sb.append("""
                     
                     ## File Processing
-                    - First, use the parseExcel tool to read the uploaded file.
-                    - Analyze the data structure (columns, types, sample data).
+                    - Attached files are given in the conversation as [file#N: fileName] references.
+                    - Use the readFile tool to read documents (xlsx/xls/csv/docx/pdf/md); use the readImage tool to recognize text in images (png/jpg/jpeg/webp/bmp). Pass the number N as the fileId argument.
+                    - First read the attached file(s), then analyze the data structure (columns, types, sample data).
                     - Plan the SQL operations based on the data.
                     - Execute the operations and verify results.
+                    - You may ONLY use file#N numbers that actually appear in the conversation. Never guess or fabricate a file ID.
                     """);
         }
 

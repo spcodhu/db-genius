@@ -1,12 +1,15 @@
 package com.dbgenius.agent.intent;
 
 import com.dbgenius.agent.DbWorkflowAgent;
-import com.dbgenius.agent.tool.ExcelParseTool;
+import com.dbgenius.agent.tool.FileReadTool;
+import com.dbgenius.agent.tool.ImageReadTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
+import com.dbgenius.agent.tool.file.FileAccessGuard;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.entity.Message;
+import com.dbgenius.model.entity.UploadedFile;
 import com.dbgenius.model.enums.IntentType;
 import com.dbgenius.model.vo.ConversationVO;
 import com.dbgenius.model.vo.IntentClassificationResult;
@@ -27,6 +30,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -42,7 +47,8 @@ public class WorkflowHandler implements IntentHandler {
     private final ConversationService conversationService;
     private final FileUploadService fileUploadService;
     private final SqlExecuteTool sqlExecuteTool;
-    private final ExcelParseTool excelParseTool;
+    private final FileReadTool fileReadTool;
+    private final ImageReadTool imageReadTool;
     private final TerminateTool terminateTool;
     private final TrialGuard trialGuard;
 
@@ -69,11 +75,21 @@ public class WorkflowHandler implements IntentHandler {
 
         boolean hasFiles = request.getFileIds() != null && !request.getFileIds().isEmpty();
         String enhancedMessage = request.getMessage();
+        Map<String, Object> toolContext = Map.of();
         if (hasFiles) {
-            List<String> filePaths = request.getFileIds().stream()
-                    .map(fileUploadService::getFilePath)
+            // 入口属主校验：任一文件不属于该用户即抛 403/404，整个请求拒绝
+            List<UploadedFile> files = request.getFileIds().stream()
+                    .map(fileId -> fileUploadService.getOwnedFile(fileId, userId))
                     .collect(Collectors.toList());
-            enhancedMessage += "\n\n[Attached files: " + String.join(", ", filePaths) + "]";
+            // 提示词只出现 [file#N: 原名] 逻辑引用，不出现任何路径/OSS key
+            String fileRefs = files.stream()
+                    .map(f -> "[file#" + f.getId() + ": " + f.getOriginalName() + "]")
+                    .collect(Collectors.joining(", "));
+            enhancedMessage += "\n\n[Attached files: " + fileRefs + "]";
+            // userId 与允许访问的文件集合经 ToolContext 在 LLM 上下文之外传递给 readFile/readImage
+            toolContext = Map.of(
+                    FileAccessGuard.CONTEXT_USER_ID, userId,
+                    FileAccessGuard.CONTEXT_ALLOWED_FILE_IDS, Set.copyOf(request.getFileIds()));
         }
 
         ConversationVO conversation = getOrCreateConversation(userId, request, dbConfigIds);
@@ -85,7 +101,8 @@ public class WorkflowHandler implements IntentHandler {
         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
         DbWorkflowAgent agent = new DbWorkflowAgent(
-                agentChatClient, sqlExecuteTool, excelParseTool, terminateTool, dbDoc, hasFiles);
+                agentChatClient, sqlExecuteTool, fileReadTool, imageReadTool, terminateTool,
+                dbDoc, hasFiles, toolContext);
         agent.setHistoryMessages(historyMessages);
         agent.setSummaryCallback(markdown ->
                 conversationService.saveMessage(conversation.getId(), "assistant", markdown, -1, "summary"));

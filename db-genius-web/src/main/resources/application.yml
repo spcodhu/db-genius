@@ -59,7 +59,15 @@ sa-token:
 
 db-genius:
   encrypt-key: ${DB_GENIUS_ENCRYPT_KEY:default-encrypt-key-change-in-production!!}
-  file-upload-dir: ${DB_GENIUS_FILE_DIR:/tmp/db-genius/uploads}
+  oss:
+    endpoint: ${ALIYUN_OSS_ENDPOINT:}
+    bucket: ${ALIYUN_OSS_BUCKET:}
+    access-key-id: ${ALIYUN_ACCESS_KEY_ID:}
+    access-key-secret: ${ALIYUN_ACCESS_KEY_SECRET:}
+    dir-prefix: ${ALIYUN_OSS_DIR_PREFIX:uploads/}
+  ocr:
+    enabled: ${ALIYUN_OCR_ENABLED:false}
+    endpoint: ${ALIYUN_OCR_ENDPOINT:ocr-api.cn-hangzhou.aliyuncs.com}
   trial:
     enabled: ${DB_GENIUS_TRIAL_ENABLED:false}
     builtin-db-name: ${DB_GENIUS_TRIAL_BUILTIN_DB_NAME:db-genius}

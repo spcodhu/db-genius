@@ -2,7 +2,7 @@ package com.dbgenius.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.dbgenius.common.result.R;
-import com.dbgenius.model.entity.UploadedFile;
+import com.dbgenius.model.vo.UploadedFileVO;
 import com.dbgenius.service.FileUploadService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -16,7 +16,7 @@ public class FileController {
     private final FileUploadService fileUploadService;
 
     @PostMapping("/upload")
-    public R<UploadedFile> upload(@RequestParam("file") MultipartFile file) {
-        return R.ok(fileUploadService.uploadFile(StpUtil.getLoginIdAsLong(), file));
+    public R<UploadedFileVO> upload(@RequestParam("file") MultipartFile file) {
+        return R.ok(UploadedFileVO.from(fileUploadService.uploadFile(StpUtil.getLoginIdAsLong(), file)));
     }
 }

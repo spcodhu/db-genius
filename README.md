@@ -279,7 +279,13 @@ All SSE events follow this JSON format:
 | `SPRING_DATASOURCE_PASSWORD` | PostgreSQL password | Yes |
 | `DEEPSEEK_API_KEY` | DeepSeek API key | Yes |
 | `DB_GENIUS_ENCRYPT_KEY` | AES-256 encryption key (32 chars) | Yes |
-| `DB_GENIUS_FILE_DIR` | File upload directory | No |
+| `ALIYUN_OSS_ENDPOINT` | Aliyun OSS endpoint (file upload storage) | Yes |
+| `ALIYUN_OSS_BUCKET` | Aliyun OSS bucket name | Yes |
+| `ALIYUN_ACCESS_KEY_ID` | Aliyun RAM AccessKey ID (OSS read/write + OCR) | Yes |
+| `ALIYUN_ACCESS_KEY_SECRET` | Aliyun RAM AccessKey secret | Yes |
+| `ALIYUN_OSS_DIR_PREFIX` | OSS object key prefix | No (default `uploads/`) |
+| `ALIYUN_OCR_ENABLED` | Enable Aliyun OCR for image text recognition | No (default `false`) |
+| `ALIYUN_OCR_ENDPOINT` | Aliyun OCR endpoint | No (default `ocr-api.cn-hangzhou.aliyuncs.com`) |
 | `SPRING_RABBITMQ_HOST` | RabbitMQ host | No (default `localhost`) |
 | `SPRING_RABBITMQ_PORT` | RabbitMQ port | No (default `5672`) |
 | `SPRING_RABBITMQ_USERNAME` | RabbitMQ username | No (default `guest`) |
