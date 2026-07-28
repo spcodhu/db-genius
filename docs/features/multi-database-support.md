@@ -2,14 +2,14 @@
 
 ## 1. 背景与目标
 
-系统原先仅支持 MySQL 作为目标数据库。本次迭代将目标库能力扩展为四种类型，并围绕「结构感知」与「安全执行」补齐配套能力：
+系统原先仅支持 MySQL 作为目标数据库。本次迭代将目标库能力扩展为三种类型，并围绕「结构感知」与「安全执行」补齐配套能力：
 
-- **四种目标数据库类型**：`mysql`（默认）、`postgresql`、`sqlite`、`mongodb`。
+- **三种目标数据库类型**：`mysql`（默认）、`postgresql`、`mongodb`。
   各类型必填项不同（见方言差异速查表），`DbConfigRequest` DTO 已放宽固定校验，
   由 `DatabaseAdapter.validateRequest` 按类型校验，校验失败返回 400。
 - **手动刷新文档**：新增 `POST /api/db-config/{id}/refresh-doc`，数据库结构变更后
   异步重新验证连接并重新生成 Markdown 文档。
-- **跨类型对比**：`DbCompareTool.compareDatabases` 支持四种类型任意两两对比
+- **跨类型对比**：`DbCompareTool.compareDatabases` 支持三种类型任意两两对比
   （含跨类型，如 MySQL vs PostgreSQL），基于中性元数据模型 diff，输出 JSON 结构不变。
 - **安全红线**：`SqlSafetyGuard` 硬性拦截 DROP/TRUNCATE 与 MongoDB drop/dropDatabase；
   三个 Agent 的 system prompt 最开头插入「安全红线（最高优先级）」块，形成双层防护。
@@ -35,11 +35,9 @@ classDiagram
         #quoteIdentifier(id)* String
         #catalog(config) String
         #schemaPattern(config) String
-        #needsAuthentication() boolean
     }
     class MySqlAdapter
     class PostgreSqlAdapter
-    class SQLiteAdapter
     class MongoDbAdapter {
         +executeCommand(config, password, commandJson) String
     }
@@ -52,7 +50,6 @@ classDiagram
     DatabaseAdapter <|.. MongoDbAdapter
     AbstractJdbcAdapter <|-- MySqlAdapter
     AbstractJdbcAdapter <|-- PostgreSqlAdapter
-    AbstractJdbcAdapter <|-- SQLiteAdapter
     DatabaseAdapterRegistry o--> DatabaseAdapter : 按 DbType 索引
 ```
 
@@ -82,7 +79,7 @@ flowchart LR
     C --> D[SqlSafetyGuard<br>硬性拦截 DROP/TRUNCATE/drop]
     D --> E[DatabaseAdapterRegistry]
     E --> F[DatabaseAdapter]
-    F --> G[(目标库<br>MySQL/PG/SQLite/MongoDB)]
+    F --> G[(目标库<br>MySQL/PG/MongoDB)]
 ```
 
 上层 `DbConfigServiceImpl` / `SqlExecuteTool` / `DbCompareTool` 全部面向 `DatabaseAdapter`
@@ -96,7 +93,7 @@ flowchart LR
 | `SchemaMetadata` / `TableMetadata` / `ColumnMetadata` / `IndexMetadata` | `com.dbgenius.model.metadata` | 中性元数据模型，跨方言统一视图 |
 | `DatabaseAdapter` | `com.dbgenius.service.database` | 策略模式接口（SPI） |
 | `AbstractJdbcAdapter` | `com.dbgenius.service.database` | JDBC 系模板方法基类 |
-| `MySqlAdapter` / `PostgreSqlAdapter` / `SQLiteAdapter` | `com.dbgenius.service.database` | JDBC 系具体策略 |
+| `MySqlAdapter` / `PostgreSqlAdapter` | `com.dbgenius.service.database` | JDBC 系具体策略 |
 | `MongoDbAdapter` | `com.dbgenius.service.database` | 非 JDBC 直接实现接口 |
 | `DatabaseAdapterRegistry` | `com.dbgenius.service.database` | 注册表，Spring 自动收集全部 adapter Bean |
 | `DatabaseDocRenderer` | `com.dbgenius.service.database` | SchemaMetadata → Markdown，格式与历史逐字符一致 |
@@ -112,21 +109,20 @@ flowchart LR
 
 ### 3.2 模板方法模式（AbstractJdbcAdapter）
 
-MySQL / PostgreSQL / SQLite 都通过 JDBC 访问，「打开连接 → 遍历表 → 抽取列/主键/索引
+MySQL / PostgreSQL 都通过 JDBC 访问，「打开连接 → 遍历表 → 抽取列/主键/索引
 → 组装中性元数据」主流程完全一致，固化为模板方法（`testConnection`、`extractSchema`）；
 方言差异下沉为钩子方法：
 
-| 钩子方法 | 默认实现 | MySQL | PostgreSQL | SQLite |
-|----------|----------|-------|------------|--------|
-| `buildJdbcUrl` | （抽象，必须实现） | `jdbc:mysql://host:port/dbName?useSSL=false&...` | `jdbc:postgresql://host:port/dbName` | `jdbc:sqlite:<文件路径>` |
-| `quoteIdentifier` | （抽象，必须实现） | 反引号 `` ` `` | 双引号 `"` | 双引号 `"` |
-| `catalog` | `dbName` | `dbName` | 覆盖 | 默认 |
-| `schemaPattern` | `null` | `null` | `"public"` | `null` |
-| `needsAuthentication` | `true` | `true` | `true` | `false`（单参 getConnection） |
+| 钩子方法 | 默认实现 | MySQL | PostgreSQL |
+|----------|----------|-------|------------|
+| `buildJdbcUrl` | （抽象，必须实现） | `jdbc:mysql://host:port/dbName?useSSL=false&...` | `jdbc:postgresql://host:port/dbName` |
+| `quoteIdentifier` | （抽象，必须实现） | 反引号 `` ` `` | 双引号 `"` |
+| `catalog` | `dbName` | `dbName` | 覆盖 |
+| `schemaPattern` | `null` | `null` | `"public"` |
 
 `quoteIdentifier` 设计为抽象方法是刻意的：强制每种方言显式声明引号，避免默认引号
 在新方言下静默出错。`openConnection` 同时作为 agent 模块 `SqlExecuteTool` 执行 SQL 的
-统一连接入口。
+统一连接入口，走账密认证。
 
 ### 3.3 注册表模式（DatabaseAdapterRegistry）
 
@@ -162,16 +158,16 @@ MySQL / PostgreSQL / SQLite 都通过 JDBC 访问，「打开连接 → 遍历�
 
 ## 4. 各方言差异速查表
 
-| 维度 | MySQL | PostgreSQL | SQLite | MongoDB |
-|------|-------|------------|--------|---------|
-| URL 模板 | `jdbc:mysql://host:port/db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC` | `jdbc:postgresql://host:port/db` | `jdbc:sqlite:<文件路径>` | `mongodb://[user:pwd@]host:port/`（密码 URL 编码） |
-| catalog | `dbName` | 覆盖（非 dbName 定位） | 默认 | 无此概念 |
-| schemaPattern | `null` | `"public"`（PG 的表在 schema 下） | `null` | 无此概念 |
-| 标识符引号 | 反引号 | 双引号 | 双引号 | 无此概念 |
-| 认证 | 账密 | 账密 | 无认证 | 账密可空（支持无认证部署） |
-| 配置必填项 | host+port+dbName+username+password | host+port+dbName+username+password | 仅 dbName（文件路径） | host+port+dbName |
-| 只读前缀 | SELECT/SHOW/DESC/EXPLAIN | 同左 | 同左 + PRAGMA | find/count/distinct 恒只读；aggregate 不含 $out/$merge 才只读 |
-| 元数据关键决策 | 行数 `SELECT COUNT(*)` | 同左 | 同左 | 集合即表；采样 50 文档合并 key 推断字段；`estimatedDocumentCount` 行数；`listIndexes` 索引 |
+| 维度 | MySQL | PostgreSQL | MongoDB |
+|------|-------|------------|---------|
+| URL 模板 | `jdbc:mysql://host:port/db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC` | `jdbc:postgresql://host:port/db` | `mongodb://[user:pwd@]host:port/`（密码 URL 编码） |
+| catalog | `dbName` | 覆盖（非 dbName 定位） | 无此概念 |
+| schemaPattern | `null` | `"public"`（PG 的表在 schema 下） | 无此概念 |
+| 标识符引号 | 反引号 | 双引号 | 无此概念 |
+| 认证 | 账密 | 账密 | 账密可空（支持无认证部署） |
+| 配置必填项 | host+port+dbName+username+password | host+port+dbName+username+password | host+port+dbName |
+| 只读前缀 | SELECT/SHOW/DESC/EXPLAIN | 同左 | find/count/distinct 恒只读；aggregate 不含 $out/$merge 才只读 |
+| 元数据关键决策 | 行数 `SELECT COUNT(*)` | 同左 | 集合即表；采样 50 文档合并 key 推断字段；`estimatedDocumentCount` 行数；`listIndexes` 索引 |
 
 MongoDB 补充说明：文档型库无固定 Schema，采样结果仅供 LLM 参考，不保证覆盖所有字段；
 字段一律视为可空，字段名 `_id` 视为主键。
@@ -218,7 +214,7 @@ sequenceDiagram
 
 | 通道 | 拦截内容 | 实现 |
 |------|----------|------|
-| SQL 系（MySQL/PG/SQLite） | DROP / TRUNCATE 一切变体（含 DROP TABLE、DROP DATABASE、ALTER TABLE ... DROP COLUMN） | 剥离 `--` 行注释、`/* */` 块注释、单/双引号字面量后做词边界匹配（忽略大小写），命中抛 403 |
+| SQL 系（MySQL/PG） | DROP / TRUNCATE 一切变体（含 DROP TABLE、DROP DATABASE、ALTER TABLE ... DROP COLUMN） | 剥离 `--` 行注释、`/* */` 块注释、单/双引号字面量后做词边界匹配（忽略大小写），命中抛 403 |
 | MongoDB | 裸命令形态的 drop / dropDatabase | 同样剥离注释与字面量后词边界匹配，命中抛 403 |
 | MongoDB 兜底 | 非 find/count/distinct/aggregate 的操作一律拒绝；aggregate 管道含 $out/$merge 拒绝 403 | 操作白名单 + 管道只读断言 |
 
@@ -267,7 +263,7 @@ flowchart TB
 | 测试类 | 覆盖点 |
 |--------|--------|
 | `SqlSafetyGuardTest`（db-genius-common） | DROP/TRUNCATE 命中；注释内的 drop 不误伤；字符串字面量内的 'drop' 不误伤；MongoDB drop/dropDatabase 命中 |
-| `MySqlAdapterTest` / `PostgreSqlAdapterTest` / `SQLiteAdapterTest` / `MongoDbAdapterTest`（db-genius-service） | URL 模板逐字符断言、catalog/schemaPattern、标识符引号、validateRequest 正反例（缺 host/port/密码抛 400）、只读判断 |
+| `MySqlAdapterTest` / `PostgreSqlAdapterTest` / `MongoDbAdapterTest`（db-genius-service） | URL 模板逐字符断言、catalog/schemaPattern、标识符引号、validateRequest 正反例（缺 host/port/密码抛 400）、只读判断 |
 | `DatabaseAdapterRegistryTest`（db-genius-service） | 按类型取策略、历史数据回退 mysql、不支持的类型抛 400 |
 | `DatabaseDocRendererTest`（db-genius-service） | Markdown 输出与历史格式逐字符兼容 |
 | `SqlExecuteToolTest`（db-genius-agent） | 安全拦截用例（DROP/TRUNCATE 拒绝）、MongoDB 命令委托给 `MongoDbAdapter.executeCommand` |
@@ -304,10 +300,16 @@ void 校验失败_缺host抛400() {
   由 `MySqlAdapterTest` 保障。
 - **既有前端接口不变**：`dbType` 缺省 mysql；`db_config.db_type` 列存小写 code，历史数据
   （无 dbType 概念）经 `DbType.fromCode` 统一回退为 mysql；既有端点路径与语义均不变。
-- **AesUtil 空密码处理**：SQLite（无密码）与 MongoDB（密码可空）配置入库时密文存 null，
+- **AesUtil 空密码处理**：MongoDB（密码可空）配置入库时密文存 null，
   解密侧对 null/空白直通，不做加解密。
 - **已知边界：MongoDB JSON 形态的 drop**——MongoDB 的删除操作可通过正常 JSON 命令
   表达（如 `{"operation":"drop"}`），这类形态不依赖关键字扫描，由**操作白名单**兜底：
   非 find/count/distinct/aggregate 一律拒绝，因此 drop 操作无法进入执行逻辑。
 - **试用版**：`sql_query` 意图的只读限制按方言判断（`isReadOnlyStatement`），
-  SQLite 的 PRAGMA、MongoDB 的 find/count/distinct 均视为只读。
+  MongoDB 的 find/count/distinct 视为只读。
+- **SQLite 支持已移除**：SQLite 曾作为第四种类型接入（`dbName` 即文件路径、无账密）。
+  因其为嵌入式库、不支持远程连接，与 SaaS 形态（用户无法把文件放到服务端）不符；
+  且 xerial 驱动默认 `READWRITE|CREATE` 打开，配置路径不存在时会在服务端误建空文件
+  并误报"连接成功"。综合需求与安全考虑已整体移除（枚举、适配器、驱动依赖、
+  文档）。`db_config` 表中如残留 `db_type='sqlite'` 的历史行，会按不支持类型
+  在 `DbType.fromCode` 处抛 400。

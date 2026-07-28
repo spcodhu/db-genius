@@ -158,7 +158,7 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     }
 
     public String getDecryptedPassword(DbConfig config) {
-        // SQLite 等无密码场景下密文为空，直接返回 null 供适配器按类型处理
+        // MongoDB 无认证部署等无密码场景下密文为空，直接返回 null 供适配器按类型处理
         String encrypted = config.getPasswordEncrypted();
         if (encrypted == null || encrypted.isBlank()) {
             return null;
@@ -167,7 +167,7 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     }
 
     /**
-     * 密码为空时密文存 null（SQLite 无账密、MongoDB 账密可空），否则 AES 加密存储。
+     * 密码为空时密文存 null（MongoDB 账密可空），否则 AES 加密存储。
      */
     private String encryptPasswordIfPresent(String password) {
         if (password == null || password.isBlank()) {

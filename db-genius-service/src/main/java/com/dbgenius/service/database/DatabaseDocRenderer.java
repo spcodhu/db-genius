@@ -30,7 +30,7 @@ public final class DatabaseDocRenderer {
         doc.append("# Database: ").append(schema.getDatabaseName()).append("\n\n");
         doc.append("- Type: ").append(schema.getDbType()).append("\n");
         if (schema.getHost() != null) {
-            // SQLite 等无主机概念时不输出 Host 行
+            // host 为 null 时不输出 Host 行
             doc.append("- Host: ").append(schema.getHost()).append(":").append(schema.getPort()).append("\n\n");
         } else {
             doc.append("\n");

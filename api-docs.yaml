@@ -303,7 +303,7 @@ paths:
         - `sql_query`：SQL 对话查询，需要提供 `dbConfigIds`
         - `workflow`：复杂工作流，需要提供 `dbConfigIds`，可附加 `fileIds`
         - `db_compare`：数据库对比，需要提供 `preDbConfigId` 和 `testDbConfigId`；
-          支持四种类型（mysql/postgresql/sqlite/mongodb）任意两两对比，含跨类型对比（如 MySQL vs PostgreSQL），基于中性元数据模型 diff
+          支持三种类型（mysql/postgresql/mongodb）任意两两对比，含跨类型对比（如 MySQL vs PostgreSQL），基于中性元数据模型 diff
 
         **试用版限制：**
         - `sql_query` 仅支持只读查询（`SELECT/SHOW/DESC/EXPLAIN`），`INSERT/UPDATE/DELETE/DDL` 会被拒绝。
@@ -788,32 +788,31 @@ components:
         dbType:
           type: string
           default: mysql
-          enum: [mysql, postgresql, sqlite, mongodb]
+          enum: [mysql, postgresql, mongodb]
           description: |
             目标数据库类型，缺省为 `mysql`。各类型必填项不同（DTO 层不做固定校验，
             由服务端按类型校验，不满足返回 `400`）：
             - `mysql` / `postgresql`：必填 host、port、dbName、username、password
-            - `sqlite`：仅需 dbName（即数据库文件路径，无 host/port/账密概念）
             - `mongodb`：必填 host、port、dbName；username、password 可空（支持无认证部署）
         host:
           type: string
-          description: 数据库主机（sqlite 类型不需要）
+          description: 数据库主机
           example: 192.168.1.100
         port:
           type: integer
-          description: 数据库端口（sqlite 类型不需要）
+          description: 数据库端口
           example: 3306
         dbName:
           type: string
-          description: 数据库名；sqlite 类型为数据库文件路径（如 /data/app.db）
+          description: 数据库名
           example: my_database
         username:
           type: string
-          description: 登录用户名（mysql/postgresql 必填；mongodb 可空；sqlite 不需要）
+          description: 登录用户名（mysql/postgresql 必填；mongodb 可空）
           example: root
         password:
           type: string
-          description: 登录密码（mysql/postgresql 必填；mongodb 可空；sqlite 不需要）
+          description: 登录密码（mysql/postgresql 必填；mongodb 可空）
           example: my_password
 
     UnifiedChatRequest:
@@ -889,7 +888,7 @@ components:
           example: 生产环境-主库
         dbType:
           type: string
-          description: 数据库类型（mysql / postgresql / sqlite / mongodb）
+          description: 数据库类型（mysql / postgresql / mongodb）
           example: mysql
         host:
           type: string

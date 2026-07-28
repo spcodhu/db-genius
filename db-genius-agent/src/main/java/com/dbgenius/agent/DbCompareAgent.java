@@ -67,7 +67,7 @@ public class DbCompareAgent extends ToolCallAgent {
                 ## Rules
                 - Always verify the comparison results before generating SQL.
                 - For destructive operations, add clear warnings.
-                - 支持 MySQL/PostgreSQL/SQLite/MongoDB 四种类型之间的结构对比；跨类型对比时类型名差异需结合方言差异解读（如 MySQL 的 INT 与 PostgreSQL 的 INTEGER 可能等价）。
+                - 支持 MySQL/PostgreSQL/MongoDB 三种类型之间的结构对比；跨类型对比时类型名差异需结合方言差异解读（如 MySQL 的 INT 与 PostgreSQL 的 INTEGER 可能等价）。
                 - Respond in the same language as the user.
                 - Format the output beautifully with proper sections and headers.
                 

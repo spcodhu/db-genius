@@ -5,7 +5,7 @@ import lombok.Data;
 /**
  * 统一的数据库列元数据（适配器模式的「统一视图」产物之一）。
  *
- * <p><b>设计说明：</b>不同数据库（MySQL/PostgreSQL/SQLite/MongoDB，乃至未来的向量库）
+ * <p><b>设计说明：</b>不同数据库（MySQL/PostgreSQL/MongoDB，乃至未来的向量库）
  * 的元数据形态差异很大，本类将其收敛为与方言无关的中性模型，
  * 供文档渲染器（{@code DatabaseDocRenderer}）和库间结构对比（{@code DbCompareTool}）共用，
  * 使上层逻辑完全面向抽象编程，不感知具体数据库方言。</p>

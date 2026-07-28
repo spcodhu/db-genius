@@ -97,8 +97,8 @@ class DatabaseDocRendererTest {
     @Test
     void 无注释无索引无错误时对应段落不出现() {
         SchemaMetadata schema = new SchemaMetadata();
-        schema.setDbType("sqlite");
-        schema.setDatabaseName("/data/app.db");
+        schema.setDbType("postgresql");
+        schema.setDatabaseName("testdb");
         schema.setHost(null);
 
         TableMetadata table = new TableMetadata();

@@ -22,10 +22,10 @@ public class SchemaMetadata {
     /** 数据库展示名称（{@code DbType#getDisplayName()}） */
     private String dbTypeDisplayName;
 
-    /** 数据库名（SQLite 为文件路径） */
+    /** 数据库名 */
     private String databaseName;
 
-    /** 主机地址，SQLite 等无主机概念时为 null */
+    /** 主机地址 */
     private String host;
 
     /** 端口，无端口概念时为 null */

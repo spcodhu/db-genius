@@ -17,7 +17,7 @@ import com.dbgenius.model.metadata.SchemaMetadata;
  * <p><b>类层次（模板方法模式）：</b></p>
  * <pre>
  * DatabaseAdapter（策略接口）
- *   ├── AbstractJdbcAdapter（JDBC 系模板：MySQL / PostgreSQL / SQLite）
+ *   ├── AbstractJdbcAdapter（JDBC 系模板：MySQL / PostgreSQL）
  *   └── MongoDbAdapter（非 JDBC，独立实现）
  * </pre>
  *
@@ -39,8 +39,7 @@ public interface DatabaseAdapter {
      * 按数据库类型对配置请求做条件校验。
      *
      * <p>不同类型的必填项不同：MySQL/PostgreSQL 需要 host/port/账密，
-     * SQLite 只需要 dbName（文件路径），MongoDB 账密可空。
-     * 因此 DTO 层不做固定校验，统一委托给本方法。</p>
+     * MongoDB 账密可空。因此 DTO 层不做固定校验，统一委托给本方法。</p>
      *
      * @param request 配置请求
      * @throws com.dbgenius.common.exception.BusinessException 校验不通过时抛出
@@ -51,7 +50,7 @@ public interface DatabaseAdapter {
      * 测试目标库连通性。
      *
      * @param config            数据库配置
-     * @param decryptedPassword 已解密的明文密码（可为 null，如 SQLite）
+     * @param decryptedPassword 已解密的明文密码（可为 null，如 MongoDB 无认证部署）
      * @return 连接可用返回 true，任何异常均捕获并返回 false
      */
     boolean testConnection(DbConfig config, String decryptedPassword);

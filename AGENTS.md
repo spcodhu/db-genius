@@ -15,7 +15,7 @@ Spring Boot 3.4 multi-module Maven project: an AI agent that turns natural langu
 
 ## Architecture Gotchas
 
-- **Two database roles**: PostgreSQL 16 is the *system* DB (users, configs, conversations). User-managed target DBs are MySQL, connected dynamically at runtime — don't conflate them.
+- **Two database roles**: PostgreSQL 16 is the *system* DB (users, configs, conversations). User-managed target DBs are MySQL / PostgreSQL / MongoDB, connected dynamically at runtime — don't conflate them. (SQLite was dropped: it has no remote access, so it makes no sense for a SaaS product.)
 - **PostgreSQL schema is `app`, not `public`**: the JDBC URL MUST include `?currentSchema=app`. `schema.sql` (`db-genius-web/src/main/resources/db/schema.sql`) is NOT auto-run on startup — apply it manually to a fresh DB.
 - **RabbitMQ required** for async db-config connection verification and doc generation. Start it via `docker compose up -d`.
 - **Agent framework** is a Template Method hierarchy: `BaseAgent → ReActAgent → ToolCallAgent`, with concrete `DbSqlAgent`, `DbWorkflowAgent`, `DbCompareAgent`. Intent routing: `IntentClassifier → IntentHandlerRegistry` (Strategy + Registry). Add new intents as `IntentHandler` beans (auto-discovered).

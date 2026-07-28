@@ -27,9 +27,6 @@ public enum DbType {
     /** PostgreSQL（关系型，JDBC） */
     POSTGRESQL("postgresql", "PostgreSQL", true),
 
-    /** SQLite（嵌入式关系型，JDBC，dbName 即数据库文件路径） */
-    SQLITE("sqlite", "SQLite", true),
-
     /** MongoDB（文档型，非 JDBC，使用官方同步驱动） */
     MONGODB("mongodb", "MongoDB", false);
 
@@ -60,6 +57,6 @@ public enum DbType {
             }
         }
         throw new BusinessException(400, "Unsupported database type: " + code
-                + ". Supported types: mysql, postgresql, sqlite, mongodb");
+                + ". Supported types: mysql, postgresql, mongodb");
     }
 }

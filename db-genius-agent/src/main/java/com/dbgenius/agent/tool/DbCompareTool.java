@@ -25,7 +25,7 @@ import java.util.*;
  * <p><b>设计说明：</b>本工具不再直连 JDBC 读取 {@code DatabaseMetaData}，而是让两侧各自的
  * {@link DatabaseAdapter} 把元数据抽取为与方言无关的中性模型 {@link SchemaMetadata}，
  * diff 逻辑只面向中性模型编程。由此带来两点收益：
- * ① 支持 MySQL/PostgreSQL/SQLite/MongoDB 四种类型之间的任意两两对比——跨类型对比时
+ * ① 支持 MySQL/PostgreSQL/MongoDB 三种类型之间的任意两两对比——跨类型对比时
  * 类型名差异会自然体现为 MODIFY_COLUMN（如 MySQL 的 INT(11) vs PostgreSQL 的 int4(10)），
  * 由 LLM 结合方言差异解读是否等价；② 未来新增数据库类型时，只要其实现了
  * {@code extractSchema}，本工具零改动即可对比（开闭原则）。</p>
@@ -48,7 +48,7 @@ public class DbCompareTool {
     private String encryptKey;
 
     @Tool(description = "Compare the table structures of two databases (pre/production vs test). "
-            + "Supports MySQL, PostgreSQL, SQLite and MongoDB in any combination. "
+            + "Supports MySQL, PostgreSQL and MongoDB in any combination. "
             + "Returns a detailed diff report including new tables, dropped tables and column changes.")
     public String compareDatabases(
             @ToolParam(description = "The pre (production mirror) database config ID") Long preDbConfigId,

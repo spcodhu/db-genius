@@ -24,17 +24,17 @@ import java.util.Set;
 /**
  * JDBC 系数据库适配器抽象基类（模板方法模式 Template Method）。
  *
- * <p><b>设计说明：</b>MySQL / PostgreSQL / SQLite 都通过 JDBC 访问，
+ * <p><b>设计说明：</b>MySQL / PostgreSQL 都通过 JDBC 访问，
  * 「打开连接 → 遍历表 → 抽取列/主键/索引 → 组装中性元数据」这一主流程完全一致，
  * 只有 URL 模板、catalog/schema 定位、标识符引号等方言细节不同。
  * 本类把公共流程固化为模板（{@link #testConnection}、{@link #extractSchema}），
  * 方言差异下沉为钩子方法（{@link #buildJdbcUrl}、{@link #catalog}、
- * {@link #schemaPattern}、{@link #quoteIdentifier}、{@link #needsAuthentication}）。</p>
+ * {@link #schemaPattern}、{@link #quoteIdentifier}）。</p>
  *
  * <p><b>扩展方式：</b>新增 JDBC 系数据库（如 Oracle）时，继承本类并：
  * ① 实现 {@link #getType()}；② 实现 {@link #buildJdbcUrl} 与 {@link #quoteIdentifier}
  * （强制显式声明引号，避免默认引号在某种方言下静默出错）；③ 按需覆盖
- * {@link #catalog}/{@link #schemaPattern}/{@link #needsAuthentication}/{@link #isReadOnlyStatement}；
+ * {@link #catalog}/{@link #schemaPattern}/{@link #isReadOnlyStatement}；
  * ④ 标注 {@code @Component} 即可被 {@link DatabaseAdapterRegistry} 自动收集。</p>
  */
 @Slf4j
@@ -43,29 +43,15 @@ public abstract class AbstractJdbcAdapter implements DatabaseAdapter {
     /**
      * 打开到目标库的 JDBC 连接。
      *
-     * <p>本方法是 agent 模块 SqlExecuteTool 执行 SQL 的统一连接入口。
-     * 默认走账密认证；{@link #needsAuthentication()} 返回 false 时（如 SQLite）
-     * 退化为单参 {@code getConnection(url)}。</p>
+     * <p>本方法是 agent 模块 SqlExecuteTool 执行 SQL 的统一连接入口，走账密认证。</p>
      *
      * @param config            数据库配置
-     * @param decryptedPassword 已解密的明文密码（无认证时忽略）
+     * @param decryptedPassword 已解密的明文密码
      * @return JDBC 连接，调用方负责关闭
      * @throws SQLException 连接失败时抛出（由调用方决定如何降级）
      */
     public Connection openConnection(DbConfig config, String decryptedPassword) throws SQLException {
-        String url = buildJdbcUrl(config);
-        if (needsAuthentication()) {
-            return DriverManager.getConnection(url, config.getUsername(), decryptedPassword);
-        }
-        // SQLite 等嵌入式库无账密概念
-        return DriverManager.getConnection(url);
-    }
-
-    /**
-     * 钩子：连接是否需要账密认证。默认 true，SQLite 等嵌入式库覆盖为 false。
-     */
-    protected boolean needsAuthentication() {
-        return true;
+        return DriverManager.getConnection(buildJdbcUrl(config), config.getUsername(), decryptedPassword);
     }
 
     /**
@@ -231,14 +217,14 @@ public abstract class AbstractJdbcAdapter implements DatabaseAdapter {
         return config.getDbName();
     }
 
-    /** 钩子：JDBC schemaPattern 定位参数，默认 null（MySQL/SQLite 无 schema 概念）。 */
+    /** 钩子：JDBC schemaPattern 定位参数，默认 null（MySQL 无 schema 概念）。 */
     protected String schemaPattern(DbConfig config) {
         return null;
     }
 
     /**
      * 钩子（抽象）：标识符引号。强制各方言显式声明
-     * （MySQL 反引号，PostgreSQL/SQLite 双引号），避免默认引号在新方言下静默出错。
+     * （MySQL 反引号，PostgreSQL 双引号），避免默认引号在新方言下静默出错。
      */
     protected abstract String quoteIdentifier(String identifier);
 }

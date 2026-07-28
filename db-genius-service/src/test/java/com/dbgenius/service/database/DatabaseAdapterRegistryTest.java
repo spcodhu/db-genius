@@ -17,7 +17,7 @@ class DatabaseAdapterRegistryTest {
 
     private DatabaseAdapterRegistry registry() {
         return new DatabaseAdapterRegistry(List.of(
-                new MySqlAdapter(), new PostgreSqlAdapter(), new SQLiteAdapter(), new MongoDbAdapter()));
+                new MySqlAdapter(), new PostgreSqlAdapter(), new MongoDbAdapter()));
     }
 
     @Test
@@ -25,7 +25,6 @@ class DatabaseAdapterRegistryTest {
         DatabaseAdapterRegistry registry = registry();
         assertInstanceOf(MySqlAdapter.class, registry.getAdapter("mysql"));
         assertInstanceOf(PostgreSqlAdapter.class, registry.getAdapter("postgresql"));
-        assertInstanceOf(SQLiteAdapter.class, registry.getAdapter("sqlite"));
         assertInstanceOf(MongoDbAdapter.class, registry.getAdapter("mongodb"));
     }
 

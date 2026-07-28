@@ -32,7 +32,7 @@ import java.util.*;
  * DROP / TRUNCATE / drop / dropDatabase 等破坏性命令——这是系统级安全红线，
  * <b>即使用户明确要求也不放行</b>，与各 Agent 系统提示词中的安全条款共同构成
  * 「提示词约束 + 代码强制」的双层防护；③ 按适配器类型分派执行：
- * JDBC 系（MySQL/PostgreSQL/SQLite）走 {@link AbstractJdbcAdapter#openConnection}，
+ * JDBC 系（MySQL/PostgreSQL）走 {@link AbstractJdbcAdapter#openConnection}，
  * MongoDB 委托 {@link MongoDbAdapter#executeCommand} 执行 JSON 命令。</p>
  */
 @Slf4j
@@ -52,7 +52,7 @@ public class SqlExecuteTool {
     private String encryptKey;
 
     @Tool(description = "Execute a statement on the specified database and return results as JSON. "
-            + "For MySQL/PostgreSQL/SQLite, pass a standard SQL statement (SELECT/INSERT/UPDATE/DELETE/DDL). "
+            + "For MySQL/PostgreSQL, pass a standard SQL statement (SELECT/INSERT/UPDATE/DELETE/DDL). "
             + "For MongoDB, pass a JSON command: {\"collection\":\"c\",\"operation\":\"find|count|distinct|aggregate\","
             + "\"filter\":{...},\"field\":\"x\",\"pipeline\":[...],\"limit\":100}. "
             + "Destructive commands (DROP, TRUNCATE, MongoDB drop/dropDatabase) are hard-rejected by the system "
@@ -123,7 +123,7 @@ public class SqlExecuteTool {
     }
 
     /**
-     * JDBC 系（MySQL/PostgreSQL/SQLite）执行路径：查询限 {@link #MAX_ROWS} 行，
+     * JDBC 系（MySQL/PostgreSQL）执行路径：查询限 {@link #MAX_ROWS} 行，
      * 结果保持既有 JSON 结构（success/rowCount/data 或 success/affectedRows/message）。
      */
     private String executeJdbc(AbstractJdbcAdapter jdbc, DatabaseAdapter adapter,
