@@ -15,6 +15,7 @@ import com.dbgenius.mq.DbConfigVerifyProducer;
 import com.dbgenius.service.DbConfigService;
 import com.dbgenius.service.database.DatabaseAdapterRegistry;
 import com.dbgenius.service.database.DatabaseDocRenderer;
+import com.dbgenius.trial.TrialDeny;
 import com.dbgenius.trial.TrialGuard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,8 +42,8 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     private DatabaseAdapterRegistry databaseAdapterRegistry;
 
     @Override
+    @TrialDeny("试用版暂不支持新增数据库配置")
     public DbConfigVO createConfig(Long userId, DbConfigRequest request) {
-        trialGuard.denyIfTrial("试用版暂不支持新增数据库配置");
         // 归一化数据库类型（null/空白回退 mysql，不识别直接 400），具体必填项由适配器按类型校验
         DbType type = DbType.fromCode(request.getDbType());
         databaseAdapterRegistry.getAdapter(type).validateRequest(request);

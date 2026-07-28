@@ -29,7 +29,7 @@ Spring Boot 3.4 multi-module Maven project: an AI agent that turns natural langu
 
 - Auth is Sa-Token; token header is `Authorization`.
 - DB passwords are encrypted with AES-256-GCM using `DB_GENIUS_ENCRYPT_KEY` (must be 32 chars). Never log or return raw credentials.
-- **Trial mode** (`DB_GENIUS_TRIAL_ENABLED=true`) enforces many restrictions (read-only SQL only, masked config fields, blocked mutations returning 403). When touching db-config, chat, file-upload, or user creation, respect the trial guards — see `TrialGuardTest`.
+- **Trial mode** (`DB_GENIUS_TRIAL_ENABLED=true`) enforces many restrictions (read-only SQL only, masked config fields, blocked mutations returning 403). When touching db-config, chat, file-upload, or user creation, respect the trial guards — see `TrialGuardTest`. Method-level "deny in trial mode" uses the `@TrialDeny(message)` annotation (`com.dbgenius.trial`, enforced by `TrialGuardAspect` via Spring AOP — works only on external calls through the Spring proxy, not self-invocation); conditional checks (e.g. `denyIfTrialBuiltin`, `isTrialMode`) still call `TrialGuard` directly.
 - MyBatis-Plus: `map-underscore-to-camel-case` is on; enums use `MybatisEnumTypeHandler` (`com.dbgenius.model.enums`).
 - **File storage is Aliyun OSS** (`db-genius.oss.*` env vars; `uploaded_file` table stores `oss_key`, not a local path). Agent file tools are `FileReadTool` (docs) and `ImageReadTool` (OCR via `db-genius.ocr.*`) — the old `ExcelParseTool` is gone. Tools take only a `fileId`; `userId`/`allowedFileIds` travel via Spring AI `ToolContext` (`FileAccessGuard`), never in LLM-visible args.
 

@@ -8,7 +8,7 @@ import com.dbgenius.model.entity.UploadedFile;
 import com.dbgenius.service.FileUploadService;
 import com.dbgenius.service.OssService;
 import com.dbgenius.service.config.OssProperties;
-import com.dbgenius.trial.TrialGuard;
+import com.dbgenius.trial.TrialDeny;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -21,13 +21,12 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class FileUploadServiceImpl extends ServiceImpl<UploadedFileMapper, UploadedFile> implements FileUploadService {
 
-    private final TrialGuard trialGuard;
     private final OssService ossService;
     private final OssProperties ossProperties;
 
     @Override
+    @TrialDeny("试用版暂不支持文件上传")
     public UploadedFile uploadFile(Long userId, MultipartFile file) {
-        trialGuard.denyIfTrial("试用版暂不支持文件上传");
         if (file.isEmpty()) {
             throw new BusinessException("File is empty");
         }

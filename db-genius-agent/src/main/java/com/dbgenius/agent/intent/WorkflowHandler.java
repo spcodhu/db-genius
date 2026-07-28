@@ -17,7 +17,7 @@ import com.dbgenius.model.vo.SseEvent;
 import com.dbgenius.service.ConversationService;
 import com.dbgenius.service.DbConfigService;
 import com.dbgenius.service.FileUploadService;
-import com.dbgenius.trial.TrialGuard;
+import com.dbgenius.trial.TrialDeny;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,7 +50,6 @@ public class WorkflowHandler implements IntentHandler {
     private final FileReadTool fileReadTool;
     private final ImageReadTool imageReadTool;
     private final TerminateTool terminateTool;
-    private final TrialGuard trialGuard;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -62,9 +61,9 @@ public class WorkflowHandler implements IntentHandler {
     }
 
     @Override
+    @TrialDeny("试用版暂不支持工作流操作")
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
                        IntentClassificationResult classification, Long userId) {
-        trialGuard.denyIfTrial("试用版暂不支持工作流操作");
         List<Long> dbConfigIds = request.getDbConfigIds();
         if (dbConfigIds == null || dbConfigIds.isEmpty()) {
             throw new IllegalArgumentException("工作流需要至少选择一个数据库配置");

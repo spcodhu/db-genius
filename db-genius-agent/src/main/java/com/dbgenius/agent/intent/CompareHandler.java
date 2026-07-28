@@ -14,7 +14,7 @@ import com.dbgenius.model.vo.IntentClassificationResult;
 import com.dbgenius.model.vo.SseEvent;
 import com.dbgenius.service.ConversationService;
 import com.dbgenius.service.DbConfigService;
-import com.dbgenius.trial.TrialGuard;
+import com.dbgenius.trial.TrialDeny;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -70,7 +70,6 @@ public class CompareHandler implements IntentHandler {
     private final DbCompareTool dbCompareTool;
     private final SqlExecuteTool sqlExecuteTool;
     private final TerminateTool terminateTool;
-    private final TrialGuard trialGuard;
     private final ApplicationContext applicationContext;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
@@ -95,9 +94,9 @@ public class CompareHandler implements IntentHandler {
     }
 
     @Override
+    @TrialDeny("试用版暂不支持数据库对比")
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
                        IntentClassificationResult classification, Long userId) {
-        trialGuard.denyIfTrial("试用版暂不支持数据库对比");
         Long preDbConfigId = request.getPreDbConfigId();
         Long testDbConfigId = request.getTestDbConfigId();
         if (preDbConfigId == null || testDbConfigId == null) {
