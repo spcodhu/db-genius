@@ -89,6 +89,7 @@ public abstract class BaseAgent {
             cleanup();
         });
 
+        // 异步执行 step 循环：SseEmitter 支持跨线程 send，不会断开连接；同步执行会阻塞 Tomcat 请求线程走完整个分钟级的 ReAct 流程
         CompletableFuture.runAsync(() -> {
             MDC.put("taskId", taskId);
             state = AgentState.RUNNING;
@@ -99,6 +100,7 @@ public abstract class BaseAgent {
                     currentStep++;
                     log.info("[{}] Step {}/{}", name, currentStep, maxSteps);
 
+                    // ReAct think-then-act，前面把工具、上下文都配置好了之后这里就可以用固定流程开始执行了
                     String result = step();
 
                     sendEvent(emitter, SseEvent.of(taskId, currentStep, "step", result));
