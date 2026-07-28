@@ -291,7 +291,7 @@ paths:
         | `clarify` | 需要用户确认意图 | JSON 对象：`{"question": "...", "options": [...], "reasoning": "..."}` |
         | `routing` | 正在路由到对应处理器 | 字符串，如 "正在启动 SQL 查询智能体..." |
         | `thinking` | AI 正在分析需求 | 字符串 |
-        | `reasoning` | 大模型 thinking 模式的推理内容 | 字符串；`simple_chat` 为流式增量片段，Agent 流程为每个 step 一条完整推理块 |
+        | `reasoning` | 大模型 thinking 模式的推理内容 | 字符串；`simple_chat` 与 Agent 流程均为流式增量片段 |
         | `step` | 每个 Agent 步骤的结果 | 字符串，SQL 执行结果等 |
         | `content` | 简单会话的流式文本片段 | 字符串 |
         | `summary` | 最终 Markdown 总结 | Markdown 字符串 |

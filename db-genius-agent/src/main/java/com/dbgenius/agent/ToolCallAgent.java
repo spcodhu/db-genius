@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -28,26 +29,30 @@ public class ToolCallAgent extends ReActAgent {
 
     protected final ToolCallback[] availableTools;
     protected final ChatClient chatClient;
+    protected final ReasoningChatModel reasoningChatModel;
     protected final ToolCallingManager toolCallingManager;
     protected final ChatOptions chatOptions;
 
     private ChatResponse toolCallChatResponse;
 
     public ToolCallAgent(String name, String systemPrompt, String nextStepPrompt,
-                         int maxSteps, ChatClient chatClient, Object... toolObjects) {
-        this(name, systemPrompt, nextStepPrompt, maxSteps, chatClient, null, toolObjects);
+                         int maxSteps, ChatClient chatClient, ReasoningChatModel reasoningChatModel,
+                         Object... toolObjects) {
+        this(name, systemPrompt, nextStepPrompt, maxSteps, chatClient, reasoningChatModel, null, toolObjects);
     }
 
     public ToolCallAgent(String name, String systemPrompt, String nextStepPrompt,
-                         int maxSteps, ChatClient chatClient,
+                         int maxSteps, ChatClient chatClient, ReasoningChatModel reasoningChatModel,
                          Map<String, Object> toolContext, Object... toolObjects) {
         super(name, maxSteps);
         this.systemPrompt = systemPrompt;
         this.nextStepPrompt = nextStepPrompt;
         this.chatClient = chatClient;
+        this.reasoningChatModel = reasoningChatModel;
         this.availableTools = ToolCallbacks.from(toolObjects);
         this.toolCallingManager = ToolCallingManager.builder().build();
         ToolCallingChatOptions.Builder optionsBuilder = ToolCallingChatOptions.builder()
+                .toolCallbacks(this.availableTools)
                 .internalToolExecutionEnabled(false);
         if (toolContext != null) {
             // toolContext 随 chatOptions 进入 Prompt，executeToolCalls 时自动传给声明了
@@ -76,13 +81,17 @@ public class ToolCallAgent extends ReActAgent {
             messageList.add(new UserMessage(nextStepPrompt));
         }
 
-        Prompt prompt = new Prompt(messageList, chatOptions);
+        // 原先经 ChatClient 的 .system(systemPrompt) 注入，等价于在消息列表头部加 SystemMessage
+        List<Message> requestMessages = new ArrayList<>(messageList.size() + 1);
+        requestMessages.add(new SystemMessage(systemPrompt));
+        requestMessages.addAll(messageList);
+        Prompt prompt = new Prompt(requestMessages, chatOptions);
 
-        ChatResponse response = chatClient.prompt(prompt)
-                .system(systemPrompt)
-                .toolCallbacks(availableTools)
-                .call()
-                .chatResponse();
+        // 流式聚合调用：reasoning 增量实时推给前端（阻塞 call() 在 thinking 模式下会静默
+        // 数十秒才一次性出结果，SSE 表现为步骤成批到达）；返回的完整响应与 call() 同构，
+        // metadata 带完整 reasoningContent，后续轮次由 ReasoningChatModel 回传给 DeepSeek
+        ChatResponse response = reasoningChatModel.streamAggregated(prompt,
+                reasoningDelta -> sendEvent(emitter, SseEvent.of(taskId, currentStep, "reasoning", reasoningDelta)));
 
         if (response == null || response.getResult() == null) {
             log.warn("[{}] Empty response from LLM", name);
@@ -96,13 +105,6 @@ public class ToolCallAgent extends ReActAgent {
 
         String result = assistantMessage.getText();
         log.info("[{}] thinking: {}", name, result);
-
-        // thinking 模式的推理内容：作为 reasoning 事件推给前端，并随消息入列表
-        // （后续轮次由 ReasoningChatModel 回传给 DeepSeek，否则 API 返回 400）
-        Object reasoningContent = assistantMessage.getMetadata().get(ReasoningChatModel.REASONING_CONTENT_KEY);
-        if (reasoningContent instanceof String reasoning && !reasoning.isBlank()) {
-            sendEvent(emitter, SseEvent.of(taskId, currentStep, "reasoning", reasoning));
-        }
 
         if (toolCalls == null || toolCalls.isEmpty()) {
             messageList.add(assistantMessage);
@@ -171,6 +173,8 @@ public class ToolCallAgent extends ReActAgent {
 
     @Override
     protected void onFinish(SseEmitter emitter, String userPrompt) throws Exception {
+        // summary 是一次全量上下文的阻塞调用，耗时较长，先推状态避免前端误以为连接已断
+        sendEvent(emitter, SseEvent.of(taskId, currentStep, "thinking", "正在生成总结..."));
         String markdown = generateMarkdownSummary(userPrompt);
         sendEvent(emitter, SseEvent.of(taskId, currentStep, "summary", markdown));
         if (summaryCallback != null) {

@@ -17,7 +17,8 @@ public class DbWorkflowAgent extends ToolCallAgent {
     private final String dbDocContext;
     private final boolean hasFiles;
 
-    public DbWorkflowAgent(ChatClient chatClient, SqlExecuteTool sqlExecuteTool,
+    public DbWorkflowAgent(ChatClient chatClient, ReasoningChatModel reasoningChatModel,
+                           SqlExecuteTool sqlExecuteTool,
                            FileReadTool fileReadTool, ImageReadTool imageReadTool,
                            TerminateTool terminateTool,
                            String dbDocContext, boolean hasFiles,
@@ -28,6 +29,7 @@ public class DbWorkflowAgent extends ToolCallAgent {
                 buildNextStepPrompt(hasFiles),
                 20,
                 chatClient,
+                reasoningChatModel,
                 toolContext,
                 sqlExecuteTool,
                 fileReadTool,

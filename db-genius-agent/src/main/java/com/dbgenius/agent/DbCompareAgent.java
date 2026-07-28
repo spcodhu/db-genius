@@ -11,15 +11,16 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @Slf4j
 public class DbCompareAgent extends ToolCallAgent {
 
-    public DbCompareAgent(ChatClient chatClient, DbCompareTool dbCompareTool,
-                          SqlExecuteTool sqlExecuteTool, TerminateTool terminateTool,
-                          String preDbDoc, String testDbDoc) {
+    public DbCompareAgent(ChatClient chatClient, ReasoningChatModel reasoningChatModel,
+                          DbCompareTool dbCompareTool, SqlExecuteTool sqlExecuteTool,
+                          TerminateTool terminateTool, String preDbDoc, String testDbDoc) {
         super(
                 "DbCompareAgent",
                 buildSystemPrompt(preDbDoc, testDbDoc),
                 "Continue the comparison. If structures have been compared, analyze the differences and generate the deployment SQL. When done, call doTerminate.",
                 15,
                 chatClient,
+                reasoningChatModel,
                 dbCompareTool,
                 sqlExecuteTool,
                 terminateTool

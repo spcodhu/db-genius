@@ -19,6 +19,7 @@ Spring Boot 3.4 multi-module Maven project: an AI agent that turns natural langu
 - **PostgreSQL schema is `app`, not `public`**: the JDBC URL MUST include `?currentSchema=app`. `schema.sql` (`db-genius-web/src/main/resources/db/schema.sql`) is NOT auto-run on startup — apply it manually to a fresh DB.
 - **RabbitMQ required** for async db-config connection verification and doc generation. Start it via `docker compose up -d`.
 - **Agent framework** is a Template Method hierarchy: `BaseAgent → ReActAgent → ToolCallAgent`, with concrete `DbSqlAgent`, `DbWorkflowAgent`, `DbCompareAgent`. Intent routing: `IntentClassifier → IntentHandlerRegistry` (Strategy + Registry). Add new intents as `IntentHandler` beans (auto-discovered).
+- **Chat concurrency**: intent routing and agent step loops run on the `chatTaskExecutor` bean (`ChatExecutorConfig`) — never bare `CompletableFuture.runAsync` on the ForkJoinPool commonPool, which minute-long agent runs would starve. `ToolCallAgent.think()` streams via `ReasoningChatModel.streamAggregated` (reasoning deltas pushed as SSE `reasoning` events, then aggregated for tool-call handling); only `call()` keeps DeepSeek's `reasoning_content` pass-back for tool-call turns.
 - **SSE streaming**: `/chat` is the unified entry and streams typed JSON events (see README "SSE Event Protocol"). `taskId` is carried through logs via MDC (`%X{taskId}` in the log pattern).
 
 ## Module Layout

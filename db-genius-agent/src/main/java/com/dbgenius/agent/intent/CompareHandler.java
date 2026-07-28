@@ -1,6 +1,7 @@
 package com.dbgenius.agent.intent;
 
 import com.dbgenius.agent.DbCompareAgent;
+import com.dbgenius.agent.ReasoningChatModel;
 import com.dbgenius.agent.tool.DbCompareTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
@@ -29,6 +30,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 /**
@@ -65,6 +67,8 @@ public class CompareHandler implements IntentHandler {
      * 不会复制字段上的 @Qualifier，需配置 {@code lombok.copyableAnnotations} 或手写构造器）。
      */
     private final ChatClient agentChatClient;
+    private final ReasoningChatModel reasoningChatModel;
+    private final Executor chatTaskExecutor;
     private final DbConfigService dbConfigService;
     private final ConversationService conversationService;
     private final DbCompareTool dbCompareTool;
@@ -127,8 +131,9 @@ public class CompareHandler implements IntentHandler {
         conversationService.saveMessage(conversation.getId(), "user", message, null, "user");
 
         DbCompareAgent agent = new DbCompareAgent(
-                agentChatClient, dbCompareTool, sqlExecuteTool, terminateTool, preDbDoc, testDbDoc);
+                agentChatClient, reasoningChatModel, dbCompareTool, sqlExecuteTool, terminateTool, preDbDoc, testDbDoc);
         agent.setHistoryMessages(historyMessages);
+        agent.setExecutor(chatTaskExecutor);
         agent.setSummaryCallback(markdown ->
                 conversationService.saveMessage(conversation.getId(), "assistant", markdown, -1, "summary"));
         agent.runStream(message, taskId, emitter);

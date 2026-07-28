@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ForkJoinPool;
 import java.util.function.Consumer;
 
 @Slf4j
@@ -32,11 +34,17 @@ public abstract class BaseAgent {
     protected List<org.springframework.ai.chat.messages.Message> historyMessages = new ArrayList<>();
     /** 当前运行的 SSE 发射器，供 step 循环内部（如 think()）推送事件。 */
     protected SseEmitter emitter;
+    /** step 循环的执行器：默认 commonPool（测试直接 new agent 时维持原行为），生产由 Handler 注入 chatTaskExecutor。 */
+    protected Executor executor = ForkJoinPool.commonPool();
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     public void setSummaryCallback(Consumer<String> summaryCallback) {
         this.summaryCallback = summaryCallback;
+    }
+
+    public void setExecutor(Executor executor) {
+        this.executor = executor;
     }
 
     public void setHistoryMessages(List<org.springframework.ai.chat.messages.Message> historyMessages) {
@@ -89,7 +97,9 @@ public abstract class BaseAgent {
             cleanup();
         });
 
-        // 异步执行 step 循环：SseEmitter 支持跨线程 send，不会断开连接；同步执行会阻塞 Tomcat 请求线程走完整个分钟级的 ReAct 流程
+        // 异步执行 step 循环：SseEmitter 支持跨线程 send，不会断开连接；同步执行会阻塞 Tomcat 请求线程走完整个分钟级的 ReAct 流程。
+        // 使用注入的 executor（生产为 chatTaskExecutor）：分钟级长任务若堆在 ForkJoinPool commonPool，
+        // 少量并发即可占满，导致新会话连 classifying 事件都发不出去（前端看到事件成批到达）
         CompletableFuture.runAsync(() -> {
             MDC.put("taskId", taskId);
             state = AgentState.RUNNING;
@@ -127,7 +137,7 @@ public abstract class BaseAgent {
                 cleanup();
                 MDC.remove("taskId");
             }
-        });
+        }, executor);
     }
 
     protected abstract String step() throws Exception;

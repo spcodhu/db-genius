@@ -12,14 +12,15 @@ public class DbSqlAgent extends ToolCallAgent {
 
     private final String dbDocContext;
 
-    public DbSqlAgent(ChatClient chatClient, SqlExecuteTool sqlExecuteTool,
-                      TerminateTool terminateTool, String dbDocContext) {
+    public DbSqlAgent(ChatClient chatClient, ReasoningChatModel reasoningChatModel,
+                      SqlExecuteTool sqlExecuteTool, TerminateTool terminateTool, String dbDocContext) {
         super(
                 "DbSqlAgent",
                 buildSystemPrompt(dbDocContext),
                 "Based on the user's request, analyze the intent, generate the appropriate SQL, execute it, and report the results. When done, call doTerminate.",
                 10,
                 chatClient,
+                reasoningChatModel,
                 sqlExecuteTool,
                 terminateTool
         );

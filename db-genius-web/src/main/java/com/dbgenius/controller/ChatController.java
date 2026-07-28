@@ -11,6 +11,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -29,9 +30,13 @@ public class ChatController {
      * 统一对话入口（SSE 流式输出）
      */
     @PostMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter chat(@Valid @RequestBody UnifiedChatRequest request) {
+    public ResponseEntity<SseEmitter> chat(@Valid @RequestBody UnifiedChatRequest request) {
         Long userId = StpUtil.getLoginIdAsLong();
-        return intentRouter.route(request, userId);
+        // X-Accel-Buffering: no 防止 nginx 等中间代理缓冲 SSE 事件导致前端成批收到
+        return ResponseEntity.ok()
+                .header("Cache-Control", "no-cache")
+                .header("X-Accel-Buffering", "no")
+                .body(intentRouter.route(request, userId));
     }
 
     @GetMapping("/conversations")

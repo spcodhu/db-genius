@@ -263,7 +263,7 @@ All SSE events follow this JSON format:
 | `clarify` | Low confidence / missing prerequisite, ask user to confirm |
 | `routing` | Routing to the selected handler |
 | `thinking` | Agent is analyzing the request |
-| `reasoning` | LLM reasoning content (thinking mode); streaming deltas for simple chat, one complete block per step for agents |
+| `reasoning` | LLM reasoning content (thinking mode); streaming deltas for both simple chat and agent steps |
 | `content` | Streaming text token for simple chat |
 | `step` | Tool execution result |
 | `summary` | Final Markdown summary |

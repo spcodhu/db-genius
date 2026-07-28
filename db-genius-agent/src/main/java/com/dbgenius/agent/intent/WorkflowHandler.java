@@ -1,6 +1,7 @@
 package com.dbgenius.agent.intent;
 
 import com.dbgenius.agent.DbWorkflowAgent;
+import com.dbgenius.agent.ReasoningChatModel;
 import com.dbgenius.agent.tool.FileReadTool;
 import com.dbgenius.agent.tool.ImageReadTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
@@ -32,6 +33,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 /**
@@ -43,6 +45,8 @@ import java.util.stream.Collectors;
 public class WorkflowHandler implements IntentHandler {
 
     private final ChatClient agentChatClient;
+    private final ReasoningChatModel reasoningChatModel;
+    private final Executor chatTaskExecutor;
     private final DbConfigService dbConfigService;
     private final ConversationService conversationService;
     private final FileUploadService fileUploadService;
@@ -100,9 +104,10 @@ public class WorkflowHandler implements IntentHandler {
         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
         DbWorkflowAgent agent = new DbWorkflowAgent(
-                agentChatClient, sqlExecuteTool, fileReadTool, imageReadTool, terminateTool,
+                agentChatClient, reasoningChatModel, sqlExecuteTool, fileReadTool, imageReadTool, terminateTool,
                 dbDoc, hasFiles, toolContext);
         agent.setHistoryMessages(historyMessages);
+        agent.setExecutor(chatTaskExecutor);
         agent.setSummaryCallback(markdown ->
                 conversationService.saveMessage(conversation.getId(), "assistant", markdown, -1, "summary"));
         agent.runStream(enhancedMessage, taskId, emitter);

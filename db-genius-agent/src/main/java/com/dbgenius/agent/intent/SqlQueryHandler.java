@@ -1,6 +1,7 @@
 package com.dbgenius.agent.intent;
 
 import com.dbgenius.agent.DbSqlAgent;
+import com.dbgenius.agent.ReasoningChatModel;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
 import com.dbgenius.model.dto.UnifiedChatRequest;
@@ -24,6 +25,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 /**
@@ -35,6 +37,8 @@ import java.util.stream.Collectors;
 public class SqlQueryHandler implements IntentHandler {
 
     private final ChatClient agentChatClient;
+    private final ReasoningChatModel reasoningChatModel;
+    private final Executor chatTaskExecutor;
     private final DbConfigService dbConfigService;
     private final ConversationService conversationService;
     private final SqlExecuteTool sqlExecuteTool;
@@ -68,8 +72,9 @@ public class SqlQueryHandler implements IntentHandler {
                 toHistoryMessages(conversationService.getRecentMessages(conversation.getId(), HISTORY_SIZE));
         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
-        DbSqlAgent agent = new DbSqlAgent(agentChatClient, sqlExecuteTool, terminateTool, dbDoc);
+        DbSqlAgent agent = new DbSqlAgent(agentChatClient, reasoningChatModel, sqlExecuteTool, terminateTool, dbDoc);
         agent.setHistoryMessages(historyMessages);
+        agent.setExecutor(chatTaskExecutor);
         agent.setSummaryCallback(markdown ->
                 conversationService.saveMessage(conversation.getId(), "assistant", markdown, -1, "summary"));
         agent.runStream(request.getMessage(), taskId, emitter);

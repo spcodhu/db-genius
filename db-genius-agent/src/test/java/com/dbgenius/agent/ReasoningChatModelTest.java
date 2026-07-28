@@ -14,12 +14,16 @@ import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.ai.openai.api.OpenAiApi.ChatCompletion;
+import org.springframework.ai.openai.api.OpenAiApi.ChatCompletionChunk;
 import org.springframework.ai.openai.api.OpenAiApi.ChatCompletionFinishReason;
 import org.springframework.ai.openai.api.OpenAiApi.ChatCompletionMessage;
+import org.springframework.ai.openai.api.OpenAiApi.ChatCompletionMessage.ChatCompletionFunction;
 import org.springframework.ai.openai.api.OpenAiApi.ChatCompletionRequest;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.http.ResponseEntity;
+import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -98,6 +102,70 @@ class ReasoningChatModelTest {
         ArgumentCaptor<ChatCompletionRequest> captor = ArgumentCaptor.forClass(ChatCompletionRequest.class);
         verify(openAiApi).chatCompletionEntity(captor.capture());
         assertThat(captor.getValue().messages().get(1).reasoningContent()).isNull();
+    }
+
+    @Test
+    void shouldAggregateStreamingChunksAndEmitReasoningDeltas() {
+        // 历史含 tool call 轮次：验证流式路径同样回传 reasoning_content
+        AssistantMessage assistantWithReasoning = AssistantMessage.builder()
+                .content("我先查询用户表。")
+                .properties(Map.of(ReasoningChatModel.REASONING_CONTENT_KEY, "需要先确认表结构再生成 SQL"))
+                .toolCalls(List.of(new AssistantMessage.ToolCall("call_1", "function", "executeSql", "{}")))
+                .build();
+        ToolResponseMessage toolMessage = ToolResponseMessage.builder()
+                .responses(List.of(new ToolResponseMessage.ToolResponse("call_1", "executeSql", "rows: 42")))
+                .build();
+
+        // 流式分片：reasoning 两片 + 一个 tool_call 拆两片（首片带 id/name，次片只带 arguments 增量）
+        ChatCompletionChunk chunk1 = chunk(delta("先确认", null), null);
+        ChatCompletionChunk chunk2 = chunk(delta("表结构",
+                List.of(new ChatCompletionMessage.ToolCall(0, "call_1", "function",
+                        new ChatCompletionFunction("executeSql", "{\"sql\":")))), null);
+        ChatCompletionChunk chunk3 = chunk(delta(null,
+                List.of(new ChatCompletionMessage.ToolCall(0, null, null,
+                        new ChatCompletionFunction(null, "\"SELECT 1\"}")))),
+                ChatCompletionFinishReason.TOOL_CALLS);
+        when(openAiApi.chatCompletionStream(any())).thenReturn(Flux.just(chunk1, chunk2, chunk3));
+
+        Prompt prompt = new Prompt(
+                List.of(new UserMessage("查一下用户数"), assistantWithReasoning, toolMessage),
+                ToolCallingChatOptions.builder()
+                        .toolCallbacks(ToolCallbacks.from(new TerminateTool()))
+                        .internalToolExecutionEnabled(false)
+                        .build());
+
+        List<String> reasoningDeltas = new ArrayList<>();
+        ChatResponse response = chatModel.streamAggregated(prompt, reasoningDeltas::add);
+
+        // 请求侧断言：stream=true，且 reasoning_content 回传仍然生效
+        ArgumentCaptor<ChatCompletionRequest> captor = ArgumentCaptor.forClass(ChatCompletionRequest.class);
+        verify(openAiApi).chatCompletionStream(captor.capture());
+        ChatCompletionRequest request = captor.getValue();
+        assertThat(request.stream()).isTrue();
+        assertThat(request.messages().get(1).reasoningContent()).isEqualTo("需要先确认表结构再生成 SQL");
+        assertThat(request.tools()).isNotEmpty();
+
+        // 增量回调断言
+        assertThat(reasoningDeltas).containsExactly("先确认", "表结构");
+
+        // 聚合响应断言：完整 reasoning 入 metadata，tool_call 分片正确合并
+        AssistantMessage output = response.getResult().getOutput();
+        assertThat(output.getMetadata().get(ReasoningChatModel.REASONING_CONTENT_KEY)).isEqualTo("先确认表结构");
+        assertThat(output.getToolCalls()).hasSize(1);
+        assertThat(output.getToolCalls().get(0).name()).isEqualTo("executeSql");
+        assertThat(output.getToolCalls().get(0).arguments()).isEqualTo("{\"sql\":\"SELECT 1\"}");
+        assertThat(response.getResult().getMetadata().getFinishReason()).isEqualTo("TOOL_CALLS");
+    }
+
+    private ChatCompletionChunk chunk(ChatCompletionMessage delta, ChatCompletionFinishReason finishReason) {
+        return new ChatCompletionChunk("chatcmpl-stream-1",
+                List.of(new ChatCompletionChunk.ChunkChoice(finishReason, 0, delta, null)),
+                1719648000L, "deepseek-v4-pro", null, null, "chat.completion.chunk", null);
+    }
+
+    private ChatCompletionMessage delta(String reasoningContent, List<ChatCompletionMessage.ToolCall> toolCalls) {
+        return new ChatCompletionMessage(null, ChatCompletionMessage.Role.ASSISTANT,
+                null, null, toolCalls, null, null, null, reasoningContent);
     }
 
     private void stubChatCompletion(String content, String reasoningContent) {

@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 /**
  * 意图路由编排器
@@ -34,6 +35,7 @@ public class IntentRouter {
     private final IntentClassifier classifier;
     private final IntentHandlerRegistry registry;
     private final ConversationService conversationService;
+    private final Executor chatTaskExecutor;
 
     private static final int HISTORY_CONTEXT_SIZE = 5;
     private static final double CONFIDENCE_THRESHOLD = IntentClassifier.CONFIDENCE_THRESHOLD;
@@ -91,7 +93,7 @@ public class IntentRouter {
                 sendEvent(emitter, SseEvent.error(taskId, e.getMessage()));
                 emitter.complete();
             }
-        });
+        }, chatTaskExecutor);
 
         return emitter;
     }
