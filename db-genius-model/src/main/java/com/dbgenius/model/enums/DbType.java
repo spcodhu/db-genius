@@ -28,7 +28,28 @@ public enum DbType {
     POSTGRESQL("postgresql", "PostgreSQL", true),
 
     /** MongoDB（文档型，非 JDBC，使用官方同步驱动） */
-    MONGODB("mongodb", "MongoDB", false);
+    MONGODB("mongodb", "MongoDB", false),
+
+    /** MariaDB（MySQL 协议兼容，复用 MySQL JDBC 驱动） */
+    MARIADB("mariadb", "MariaDB", true),
+
+    /** TiDB（MySQL 协议兼容的分布式 HTAP，复用 MySQL JDBC 驱动） */
+    TIDB("tidb", "TiDB", true),
+
+    /** Apache Doris（MySQL 协议兼容的 OLAP，复用 MySQL JDBC 驱动） */
+    DORIS("doris", "Doris", true),
+
+    /** StarRocks（MySQL 协议兼容的 OLAP，复用 MySQL JDBC 驱动） */
+    STARROCKS("starrocks", "StarRocks", true),
+
+    /** OceanBase（MySQL 模式兼容的分布式数据库，复用 MySQL JDBC 驱动） */
+    OCEANBASE("oceanbase", "OceanBase", true),
+
+    /** Oracle（关系型，JDBC，ojdbc 驱动） */
+    ORACLE("oracle", "Oracle", true),
+
+    /** SQL Server（关系型，JDBC，mssql-jdbc 驱动） */
+    SQLSERVER("sqlserver", "SQL Server", true);
 
     /** 存入 db_config.db_type 列与接口传输的类型编码 */
     private final String code;
@@ -57,6 +78,24 @@ public enum DbType {
             }
         }
         throw new BusinessException(400, "Unsupported database type: " + code
-                + ". Supported types: mysql, postgresql, mongodb");
+                + ". Supported types: mysql, postgresql, mongodb, mariadb, tidb, doris, "
+                + "starrocks, oceanbase, oracle, sqlserver");
+    }
+
+    /**
+     * 行数限制语法的方言提示（注入 Agent prompt，指导 LLM 生成正确分页语法）。
+     *
+     * <p>MySQL 协议系与 PostgreSQL 用 {@code LIMIT}；SQL Server 用 {@code TOP}；
+     * Oracle 用 {@code FETCH FIRST}；MongoDB 非 SQL 系不适用。</p>
+     *
+     * @return 方言行数限制提示（英文，供 prompt 使用）
+     */
+    public String paginationHint() {
+        return switch (this) {
+            case SQLSERVER -> "use SELECT TOP n for row limiting; do NOT use LIMIT";
+            case ORACLE -> "use FETCH FIRST n ROWS ONLY for row limiting; do NOT use LIMIT";
+            case MONGODB -> "not applicable (non-SQL database; use the JSON command's limit field)";
+            default -> "use LIMIT n for row limiting";
+        };
     }
 }

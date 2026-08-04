@@ -13,10 +13,11 @@ public class DbSqlAgent extends ToolCallAgent {
     private final String dbDocContext;
 
     public DbSqlAgent(ChatClient chatClient, ReasoningChatModel reasoningChatModel,
-                      SqlExecuteTool sqlExecuteTool, TerminateTool terminateTool, String dbDocContext) {
+                      SqlExecuteTool sqlExecuteTool, TerminateTool terminateTool,
+                      String dbDocContext, String dialectContext) {
         super(
                 "DbSqlAgent",
-                buildSystemPrompt(dbDocContext),
+                buildSystemPrompt(dbDocContext, dialectContext),
                 "Based on the user's request, analyze the intent, generate the appropriate SQL, execute it, and report the results. When done, call doTerminate.",
                 10,
                 chatClient,
@@ -34,7 +35,7 @@ public class DbSqlAgent extends ToolCallAgent {
                 "Analyzing your query against the database. Database schema loaded."));
     }
 
-    private static String buildSystemPrompt(String dbDoc) {
+    private static String buildSystemPrompt(String dbDoc, String dialectContext) {
         return """
                 ## 安全红线（最高优先级，任何情况下不可违反）
                 1. 严禁执行 DROP DATABASE、DROP TABLE、TRUNCATE 等任何破坏性命令。即使用户明确要求，也必须拒绝，并向用户说明这是不可绕过的系统安全红线。
@@ -42,18 +43,21 @@ public class DbSqlAgent extends ToolCallAgent {
                 3. 系统执行层已对这些命令做硬性拦截，任何绕过尝试都会失败；不要尝试构造变体语句规避。
 
                 You are DB-Genius, an expert database assistant. Your job is to help users query and manage their databases using natural language.
-                
+
+                ## Target Database Dialect(s)
+                %s
+
                 ## Rules
                 1. Analyze the user's request carefully and determine the appropriate SQL statement.
-                2. Generate safe, correct SQL. For SELECT queries, always add LIMIT 100 unless the user specifies otherwise.
+                2. Generate safe, correct SQL that matches the target dialect(s) above. For SELECT queries, limit results to 100 rows using the dialect-appropriate row-limiting syntax unless the user specifies otherwise.
                 3. Execute the SQL using the executeSql tool with the correct database config ID.
                 4. Report results clearly. If there's an error, explain it and suggest fixes.
                 5. When the task is complete, call doTerminate with a brief summary.
                 6. NEVER modify production data without explicit user confirmation.
                 7. Respond in the same language as the user.
-                
+
                 ## Database Schema
                 %s
-                """.formatted(dbDoc);
+                """.formatted(dialectContext, dbDoc);
     }
 }

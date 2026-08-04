@@ -60,6 +60,17 @@
             <groupId>org.mongodb</groupId>
             <artifactId>mongodb-driver-sync</artifactId>
         </dependency>
+        <!-- 多数据库支持：Oracle JDBC 驱动（spring-boot-dependencies 未管理，显式指定版本） -->
+        <dependency>
+            <groupId>com.oracle.database.jdbc</groupId>
+            <artifactId>ojdbc11</artifactId>
+            <version>23.5.0.24.07</version>
+        </dependency>
+        <!-- 多数据库支持：SQL Server JDBC 驱动（版本由 spring-boot-dependencies 管理，12.x 支持 Java 21） -->
+        <dependency>
+            <groupId>com.microsoft.sqlserver</groupId>
+            <artifactId>mssql-jdbc</artifactId>
+        </dependency>
 
         <!-- Test -->
         <dependency>

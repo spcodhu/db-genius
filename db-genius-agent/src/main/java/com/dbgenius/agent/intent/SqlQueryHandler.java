@@ -7,6 +7,7 @@ import com.dbgenius.agent.tool.TerminateTool;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.entity.Message;
+import com.dbgenius.model.enums.DbType;
 import com.dbgenius.model.enums.IntentType;
 import com.dbgenius.model.vo.ConversationVO;
 import com.dbgenius.model.vo.IntentClassificationResult;
@@ -63,6 +64,7 @@ public class SqlQueryHandler implements IntentHandler {
 
         validateDbConfigs(userId, dbConfigIds);
         String dbDoc = buildDbDocContext(userId, dbConfigIds);
+        String dialectContext = buildDialectContext(dbConfigIds);
 
         ConversationVO conversation = getOrCreateConversation(userId, request, dbConfigIds);
         sendEvent(emitter, SseEvent.of(taskId, 0, "conversation", conversation.getId()));
@@ -72,7 +74,8 @@ public class SqlQueryHandler implements IntentHandler {
                 toHistoryMessages(conversationService.getRecentMessages(conversation.getId(), HISTORY_SIZE));
         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
-        DbSqlAgent agent = new DbSqlAgent(agentChatClient, reasoningChatModel, sqlExecuteTool, terminateTool, dbDoc);
+        DbSqlAgent agent = new DbSqlAgent(agentChatClient, reasoningChatModel, sqlExecuteTool, terminateTool,
+                dbDoc, dialectContext);
         agent.setHistoryMessages(historyMessages);
         agent.setExecutor(chatTaskExecutor);
         agent.setSummaryCallback(markdown ->
@@ -84,6 +87,26 @@ public class SqlQueryHandler implements IntentHandler {
         for (Long configId : dbConfigIds) {
             dbConfigService.validateConfigForChat(userId, configId);
         }
+    }
+
+    /**
+     * 按所选配置的数据库类型生成方言提示（按类型去重），注入 Agent 系统提示。
+     *
+     * <p>调用时机在 {@link #validateDbConfigs} 之后，配置归属与状态已校验，
+     * 此处用 {@code getById} 只读 dbType 是安全的。</p>
+     */
+    private String buildDialectContext(List<Long> dbConfigIds) {
+        StringBuilder sb = new StringBuilder();
+        dbConfigIds.stream()
+                .map(configId -> {
+                    com.dbgenius.model.entity.DbConfig config = dbConfigService.getById(configId);
+                    return config == null ? null : DbType.fromCode(config.getDbType());
+                })
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .forEach(type -> sb.append("- ").append(type.getDisplayName())
+                        .append(": ").append(type.paginationHint()).append('\n'));
+        return sb.toString();
     }
 
     private String buildDbDocContext(Long userId, List<Long> dbConfigIds) {

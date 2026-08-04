@@ -19,7 +19,7 @@ public class DbConfigRequest {
     @NotBlank(message = "Config name is required")
     private String name;
 
-    /** 数据库类型编码（mysql/postgresql/mongodb），缺省按历史兼容规则视为 mysql */
+    /** 数据库类型编码（mysql/postgresql/mongodb/mariadb/tidb/doris/starrocks/oceanbase/oracle/sqlserver），缺省按历史兼容规则视为 mysql */
     private String dbType;
 
     /** 主机地址；具体必填项由对应 DatabaseAdapter.validateRequest 按类型校验 */

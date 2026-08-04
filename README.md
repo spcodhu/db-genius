@@ -62,6 +62,25 @@ DB-Genius is an AI-powered database management tool that transforms natural lang
 | **Encrypted Credentials** | AES-256-GCM encryption for database passwords |
 | **Auto Documentation** | Automatically generates database schema docs for AI context |
 
+## Supported Databases
+
+User-managed target databases connected at runtime (the system DB remains PostgreSQL):
+
+| Type | `dbType` code | Driver | Notes |
+|------|---------------|--------|-------|
+| MySQL | `mysql` | mysql-connector-j | |
+| PostgreSQL | `postgresql` | postgresql | |
+| MongoDB | `mongodb` | mongodb-driver-sync | Non-SQL; JSON commands |
+| MariaDB | `mariadb` | mysql-connector-j | MySQL protocol compatible |
+| TiDB | `tidb` | mysql-connector-j | MySQL protocol compatible |
+| Doris | `doris` | mysql-connector-j | MySQL protocol compatible (FE port 9030) |
+| StarRocks | `starrocks` | mysql-connector-j | MySQL protocol compatible (FE port 9030) |
+| OceanBase | `oceanbase` | mysql-connector-j | MySQL mode tenants |
+| Oracle | `oracle` | ojdbc11 | `dbName` = service name |
+| SQL Server | `sqlserver` | mssql-jdbc | Metadata extraction covers the `dbo` schema |
+
+Adding a new type: add a `DbType` enum value, implement a `DatabaseAdapter` bean (JDBC types extend `AbstractJdbcAdapter`), and add the driver dependency — the registry auto-discovers it.
+
 ## Tech Stack
 
 | Component | Technology |

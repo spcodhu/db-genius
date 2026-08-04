@@ -52,7 +52,8 @@ public class SqlExecuteTool {
     private String encryptKey;
 
     @Tool(description = "Execute a statement on the specified database and return results as JSON. "
-            + "For MySQL/PostgreSQL, pass a standard SQL statement (SELECT/INSERT/UPDATE/DELETE/DDL). "
+            + "For SQL-based databases (MySQL/PostgreSQL/MariaDB/TiDB/Doris/StarRocks/OceanBase/Oracle/SQL Server), "
+            + "pass a standard SQL statement matching the target dialect (SELECT/INSERT/UPDATE/DELETE/DDL). "
             + "For MongoDB, pass a JSON command: {\"collection\":\"c\",\"operation\":\"find|count|distinct|aggregate\","
             + "\"filter\":{...},\"field\":\"x\",\"pipeline\":[...],\"limit\":100}. "
             + "Destructive commands (DROP, TRUNCATE, MongoDB drop/dropDatabase) are hard-rejected by the system "

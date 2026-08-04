@@ -43,5 +43,43 @@ services:
       timeout: 5s
       retries: 5
 
+  # ===== 多数据库适配器验证实例（可选，默认不启动）=====
+  # 启动方式：docker compose --profile verify up -d
+  # 用于手动验证各 DatabaseAdapter 的连通性/元数据抽取，验证库账号仅供本机测试。
+
+  sqlserver-verify:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    profiles: ["verify"]
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "DbGenius!234" # 仅供本机验证，请勿复用到任何真实环境
+    ports:
+      - "1433:1433"
+
+  oracle-xe-verify:
+    image: gvenzl/oracle-xe:21-slim
+    profiles: ["verify"]
+    environment:
+      ORACLE_PASSWORD: "DbGenius!234" # 仅供本机验证，请勿复用到任何真实环境
+      # 默认自带 service：XEPDB1（连接时 dbName 填 XEPDB1）
+    ports:
+      - "1521:1521"
+
+  # TiDB 验证实例（较重，按需取消注释；playground 方式更推荐：tiup playground）
+  # tidb-verify:
+  #   image: pingcap/tidb:latest
+  #   profiles: ["verify"]
+  #   command: ["--store=unistore", "--path=/tmp/tidb"]
+  #   ports:
+  #     - "4000:4000"
+
+  # Doris 验证实例（FE+BE all-in-one，较重，按需取消注释）
+  # doris-verify:
+  #   image: apache/doris:doris-all-in-one-2.1.0
+  #   profiles: ["verify"]
+  #   ports:
+  #     - "9030:9030"  # FE MySQL 协议端口（适配器连接用）
+  #     - "8030:8030"  # FE HTTP 端口
+
 volumes:
   rabbitmqdata:
