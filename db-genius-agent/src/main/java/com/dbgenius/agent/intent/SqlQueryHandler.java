@@ -1,5 +1,7 @@
 package com.dbgenius.agent.intent;
 
+import com.dbgenius.agent.ChatModelFactory;
+import com.dbgenius.agent.ChatModelSession;
 import com.dbgenius.agent.DbSqlAgent;
 import com.dbgenius.agent.ReasoningChatModel;
 import com.dbgenius.agent.tool.SqlExecuteTool;
@@ -14,6 +16,7 @@ import com.dbgenius.model.vo.IntentClassificationResult;
 import com.dbgenius.model.vo.SseEvent;
 import com.dbgenius.service.ConversationService;
 import com.dbgenius.service.DbConfigService;
+import com.dbgenius.service.UserModelConfigService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,8 +40,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class SqlQueryHandler implements IntentHandler {
 
-    private final ChatClient agentChatClient;
-    private final ReasoningChatModel reasoningChatModel;
+    private final ChatModelFactory chatModelFactory;
+    private final UserModelConfigService userModelConfigService;
     private final Executor chatTaskExecutor;
     private final DbConfigService dbConfigService;
     private final ConversationService conversationService;
@@ -74,7 +77,10 @@ public class SqlQueryHandler implements IntentHandler {
                 toHistoryMessages(conversationService.getRecentMessages(conversation.getId(), HISTORY_SIZE));
         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
-        DbSqlAgent agent = new DbSqlAgent(agentChatClient, reasoningChatModel, sqlExecuteTool, terminateTool,
+        ChatModelSession session = chatModelFactory.createSession(
+                userModelConfigService.getActiveConfig(userId));
+
+        DbSqlAgent agent = new DbSqlAgent(session.agentChatClient(), session.reasoningModel(), sqlExecuteTool, terminateTool,
                 dbDoc, dialectContext);
         agent.setHistoryMessages(historyMessages);
         agent.setExecutor(chatTaskExecutor);

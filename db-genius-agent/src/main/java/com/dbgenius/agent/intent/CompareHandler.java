@@ -1,5 +1,7 @@
 package com.dbgenius.agent.intent;
 
+import com.dbgenius.agent.ChatModelFactory;
+import com.dbgenius.agent.ChatModelSession;
 import com.dbgenius.agent.DbCompareAgent;
 import com.dbgenius.agent.ReasoningChatModel;
 import com.dbgenius.agent.tool.DbCompareTool;
@@ -15,15 +17,14 @@ import com.dbgenius.model.vo.IntentClassificationResult;
 import com.dbgenius.model.vo.SseEvent;
 import com.dbgenius.service.ConversationService;
 import com.dbgenius.service.DbConfigService;
+import com.dbgenius.service.UserModelConfigService;
 import com.dbgenius.trial.TrialDeny;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -41,56 +42,18 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class CompareHandler implements IntentHandler {
 
-    /**
-     * Agent 专用的 {@link ChatClient}。
-     *
-     * <p>容器中共有两个 ChatClient bean（定义在 db-genius-web 的 {@code ChatClientConfig}）：
-     * <ul>
-     *   <li>{@code chatClient}（标注 {@code @Primary}）—— 包装普通 {@code OpenAiChatModel}，
-     *       模型名、base-url、api-key 来自 {@code spring.ai.openai.*} 配置；供
-     *       {@code SimpleChatHandler}、{@code IntentClassifier} 等非工具调用流程使用。</li>
-     *   <li>{@code agentChatClient} —— 包装 {@link com.dbgenius.agent.ReasoningChatModel}，
-     *       在工具调用轮次把 reasoning_content 回传给 DeepSeek（thinking 模式的硬性要求）；
-     *       供 CompareHandler / SqlQueryHandler / WorkflowHandler 三个 Agent 处理器使用。</li>
-     * </ul>
-     *
-     * <p>注入方式：类上的 {@code @RequiredArgsConstructor} 按 final 字段生成构造器，
-     * Spring 按类型找到两个候选 bean 后，这里的本意是依靠
-     * “构造器参数名 {@code agentChatClient} == bean 名”完成按名匹配
-     * （spring-boot 父 POM 默认开启 {@code -parameters} 编译选项，参数名才得以保留）。
-     *
-     * <p><b>注意</b>：Spring 对多候选的裁决顺序是
-     * {@code @Qualifier} &gt; {@code @Primary} &gt; 参数名匹配（见
-     * {@code DefaultListableBeanFactory#determineAutowireCandidate}）。
-     * 由于存在 {@code @Primary} 的 {@code chatClient}，仅靠参数名匹配可能被 primary 抢先，
-     * 稳妥做法是显式加 {@code @Qualifier("agentChatClient")}（Lombok 生成的构造器默认
-     * 不会复制字段上的 @Qualifier，需配置 {@code lombok.copyableAnnotations} 或手写构造器）。
-     */
-    private final ChatClient agentChatClient;
-    private final ReasoningChatModel reasoningChatModel;
+    private final ChatModelFactory chatModelFactory;
+    private final UserModelConfigService userModelConfigService;
     private final Executor chatTaskExecutor;
     private final DbConfigService dbConfigService;
     private final ConversationService conversationService;
     private final DbCompareTool dbCompareTool;
     private final SqlExecuteTool sqlExecuteTool;
     private final TerminateTool terminateTool;
-    private final ApplicationContext applicationContext;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final int HISTORY_SIZE = 10;
-
-    /**
-     * 临时验证日志：通过与容器中两个 ChatClient bean 做同一性（==）比较，
-     * 打印 agentChatClient 字段实际注入的是哪一个 bean。确认后可删除。
-     */
-    @PostConstruct
-    void logInjectedChatClient() {
-        boolean isAgentBean = applicationContext.getBean("agentChatClient") == agentChatClient;
-        boolean isPrimaryBean = applicationContext.getBean("chatClient") == agentChatClient;
-        log.info("[CompareHandler] agentChatClient 实际注入: agentChatClient(ReasoningChatModel)? {}, primary chatClient(OpenAiChatModel)? {}",
-                isAgentBean, isPrimaryBean);
-    }
 
     @Override
     public IntentType supportedIntent() {
@@ -130,8 +93,11 @@ public class CompareHandler implements IntentHandler {
                 toHistoryMessages(conversationService.getRecentMessages(conversation.getId(), HISTORY_SIZE));
         conversationService.saveMessage(conversation.getId(), "user", message, null, "user");
 
+        ChatModelSession session = chatModelFactory.createSession(
+                userModelConfigService.getActiveConfig(userId));
+
         DbCompareAgent agent = new DbCompareAgent(
-                agentChatClient, reasoningChatModel, dbCompareTool, sqlExecuteTool, terminateTool, preDbDoc, testDbDoc);
+                session.agentChatClient(), session.reasoningModel(), dbCompareTool, sqlExecuteTool, terminateTool, preDbDoc, testDbDoc);
         agent.setHistoryMessages(historyMessages);
         agent.setExecutor(chatTaskExecutor);
         agent.setSummaryCallback(markdown ->

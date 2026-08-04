@@ -1,5 +1,7 @@
 package com.dbgenius.agent.intent;
 
+import com.dbgenius.agent.ChatModelFactory;
+import com.dbgenius.agent.ChatModelSession;
 import com.dbgenius.agent.DbWorkflowAgent;
 import com.dbgenius.agent.ReasoningChatModel;
 import com.dbgenius.agent.tool.FileReadTool;
@@ -18,6 +20,7 @@ import com.dbgenius.model.vo.SseEvent;
 import com.dbgenius.service.ConversationService;
 import com.dbgenius.service.DbConfigService;
 import com.dbgenius.service.FileUploadService;
+import com.dbgenius.service.UserModelConfigService;
 import com.dbgenius.trial.TrialDeny;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -44,8 +47,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class WorkflowHandler implements IntentHandler {
 
-    private final ChatClient agentChatClient;
-    private final ReasoningChatModel reasoningChatModel;
+    private final ChatModelFactory chatModelFactory;
+    private final UserModelConfigService userModelConfigService;
     private final Executor chatTaskExecutor;
     private final DbConfigService dbConfigService;
     private final ConversationService conversationService;
@@ -103,8 +106,11 @@ public class WorkflowHandler implements IntentHandler {
                 toHistoryMessages(conversationService.getRecentMessages(conversation.getId(), HISTORY_SIZE));
         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
+        ChatModelSession session = chatModelFactory.createSession(
+                userModelConfigService.getActiveConfig(userId));
+
         DbWorkflowAgent agent = new DbWorkflowAgent(
-                agentChatClient, reasoningChatModel, sqlExecuteTool, fileReadTool, imageReadTool, terminateTool,
+                session.agentChatClient(), session.reasoningModel(), sqlExecuteTool, fileReadTool, imageReadTool, terminateTool,
                 dbDoc, hasFiles, toolContext);
         agent.setHistoryMessages(historyMessages);
         agent.setExecutor(chatTaskExecutor);

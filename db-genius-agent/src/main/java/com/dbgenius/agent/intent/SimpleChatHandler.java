@@ -1,5 +1,7 @@
 package com.dbgenius.agent.intent;
 
+import com.dbgenius.agent.ChatModelFactory;
+import com.dbgenius.agent.ChatModelSession;
 import com.dbgenius.agent.ReasoningChatModel;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Conversation;
@@ -9,6 +11,7 @@ import com.dbgenius.model.vo.ConversationVO;
 import com.dbgenius.model.vo.IntentClassificationResult;
 import com.dbgenius.model.vo.SseEvent;
 import com.dbgenius.service.ConversationService;
+import com.dbgenius.service.UserModelConfigService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,7 +35,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class SimpleChatHandler implements IntentHandler {
 
-    private final ChatClient chatClient;
+    private final ChatModelFactory chatModelFactory;
+    private final UserModelConfigService userModelConfigService;
     private final ConversationService conversationService;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
@@ -92,7 +96,10 @@ public class SimpleChatHandler implements IntentHandler {
 
         StringBuilder fullContent = new StringBuilder();
 
-        Disposable disposable = chatClient.prompt()
+        ChatModelSession session = chatModelFactory.createSession(
+                userModelConfigService.getActiveConfig(userId));
+
+        Disposable disposable = session.chatClient().prompt()
                 .messages(historyMessages)
                 .user(request.getMessage())
                 .stream()

@@ -27,15 +27,6 @@ spring:
           max-attempts: 3
           initial-interval: 2000
           multiplier: 2
-  ai:
-    openai:
-      api-key: ${DEEPSEEK_API_KEY:sk-placeholder}
-      base-url: https://api.deepseek.com
-      chat:
-        options:
-          # DeepSeek V4 默认开启 thinking 模式（temperature 等采样参数在该模式下无效）。
-          # tool call 轮次的 reasoning_content 回传由 ReasoningChatModel 处理。
-          model: deepseek-v4-pro
 
 mybatis-plus:
   type-enums-package: com.dbgenius.model.enums
@@ -59,6 +50,11 @@ sa-token:
 
 db-genius:
   encrypt-key: ${DB_GENIUS_ENCRYPT_KEY:default-encrypt-key-change-in-production!!}
+  model:
+    default:
+      api-key: ${DB_GENIUS_DEFAULT_MODEL_API_KEY:}
+      base-url: ${DB_GENIUS_DEFAULT_MODEL_BASE_URL:https://api.deepseek.com}
+      model: ${DB_GENIUS_DEFAULT_MODEL:deepseek-v4-pro}
   oss:
     endpoint: ${ALIYUN_OSS_ENDPOINT:}
     bucket: ${ALIYUN_OSS_BUCKET:}

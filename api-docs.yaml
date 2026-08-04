@@ -18,6 +18,8 @@ tags:
     description: 数据库连接配置 CRUD、连通性测试、文档生成
   - name: AI 对话
     description: 统一自然语言对话入口，自动识别意图并路由到 SQL 查询、工作流或数据库对比（SSE 流式）
+  - name: 模型配置
+    description: 多 Provider 模型配置管理，用户可自定义 API Key、Base URL 与模型名，支持系统内置厂商预设
   - name: 文件上传
     description: Excel 文件上传
   - name: 对话管理
@@ -303,7 +305,7 @@ paths:
         - `sql_query`：SQL 对话查询，需要提供 `dbConfigIds`
         - `workflow`：复杂工作流，需要提供 `dbConfigIds`，可附加 `fileIds`
         - `db_compare`：数据库对比，需要提供 `preDbConfigId` 和 `testDbConfigId`；
-          支持三种类型（mysql/postgresql/mongodb）任意两两对比，含跨类型对比（如 MySQL vs PostgreSQL），基于中性元数据模型 diff
+          支持全部已接入数据库类型（mysql/postgresql/mongodb/mariadb/tidb/doris/starrocks/oceanbase/oracle/sqlserver）任意两两对比，含跨类型对比（如 MySQL vs PostgreSQL），基于中性元数据模型 diff
 
         **试用版限制：**
         - `sql_query` 仅支持只读查询（`SELECT/SHOW/DESC/EXPLAIN`），`INSERT/UPDATE/DELETE/DDL` 会被拒绝。
@@ -508,6 +510,155 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/R_UploadedFile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---- 模型配置 ----
+  /model-config/providers:
+    get:
+      tags: [模型配置]
+      summary: 获取模型厂商预设列表
+      description: |
+        返回系统内置的模型厂商预设（DeepSeek、OpenAI、Ollama、自定义 OpenAI 兼容）。
+        用户创建模型配置时可选择预设，复用其 `defaultBaseUrl` / `defaultModel`，
+        也可选择 `custom` 预设自行填写全部参数。
+
+        当前所有预设均为 `openai_compatible`（OpenAI 兼容协议）类型。
+      responses:
+        '200':
+          description: 预设列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_ModelProviderVO_List'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /model-config/configs:
+    get:
+      tags: [模型配置]
+      summary: 获取当前用户的模型配置列表
+      description: |
+        返回当前用户保存的全部模型配置，按「默认优先、创建时间倒序」排列。
+        响应不包含 API Key（密文也不返回），密钥仅用于后端调用，前端无法读取。
+      responses:
+        '200':
+          description: 配置列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_UserModelConfigVO_List'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [模型配置]
+      summary: 新建模型配置
+      description: |
+        创建一套用户的 AI 模型配置，API Key 由后端 AES-256-GCM 加密后落库。
+
+        - `baseUrl` 可省略：省略时复用所选 provider 预设的 `defaultBaseUrl`（`custom` 预设必填）。
+        - 用户的第一条配置自动设为默认。
+        - `providerType` 当前固定为 `openai_compatible`。
+
+        **试用版限制：** 试用版下禁止新增模型配置，直接返回 `403`（试用版统一使用系统默认模型）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserModelConfigRequest'
+      responses:
+        '200':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_UserModelConfigVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /model-config/configs/{id}:
+    put:
+      tags: [模型配置]
+      summary: 编辑模型配置
+      description: |
+        更新模型配置。`apiKey` 传空字符串或省略时保持原密钥不变（编辑其他字段无需重新输入密钥）。
+
+        **试用版限制：** 试用版下禁止编辑模型配置，直接返回 `403`。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserModelConfigRequest'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_UserModelConfigVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [模型配置]
+      summary: 删除模型配置
+      description: |
+        删除模型配置。
+
+        错误码：
+        - `400`：该配置是当前默认配置，需先将其他配置设为默认
+        - `404`：配置不存在或不属于当前用户
+
+        **试用版限制：** 试用版下禁止删除模型配置，直接返回 `403`。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /model-config/configs/{id}/default:
+    put:
+      tags: [模型配置]
+      summary: 设为默认模型配置
+      description: |
+        将指定配置设为当前用户的默认配置（同一用户仅一条默认，设置后自动取消旧默认）。
+
+        错误码：
+        - `400`：该配置已禁用，不能设为默认
+        - `404`：配置不存在或不属于当前用户
+
+        **试用版限制：** 试用版下禁止切换默认模型配置，直接返回 `403`。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /model-config/active:
+    get:
+      tags: [模型配置]
+      summary: 获取当前生效的模型配置
+      description: |
+        返回当前驱动对话的模型配置概要（不含密钥）：
+        - 优先取用户设为默认且启用的配置；
+        - 无默认时取最新启用的一条；
+        - 用户完全未配置时返回系统兜底配置（`providerCode=system`，`id=null`），
+          实际使用部署时的 `DB_GENIUS_DEFAULT_MODEL_*` 环境变量；
+        - 系统兜底也缺失时接口返回 `500`，前端应引导用户去配置模型。
+      responses:
+        '200':
+          description: 当前生效配置
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_UserModelConfigVO'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -718,6 +869,43 @@ components:
         data:
           $ref: '#/components/schemas/TrialStatus'
 
+    R_ModelProviderVO_List:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelProviderVO'
+
+    R_UserModelConfigVO:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/UserModelConfigVO'
+
+    R_UserModelConfigVO_List:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserModelConfigVO'
+
     R_SalesContact:
       type: object
       properties:
@@ -788,12 +976,13 @@ components:
         dbType:
           type: string
           default: mysql
-          enum: [mysql, postgresql, mongodb]
+          enum: [mysql, postgresql, mongodb, mariadb, tidb, doris, starrocks, oceanbase, oracle, sqlserver]
           description: |
             目标数据库类型，缺省为 `mysql`。各类型必填项不同（DTO 层不做固定校验，
             由服务端按类型校验，不满足返回 `400`）：
-            - `mysql` / `postgresql`：必填 host、port、dbName、username、password
+            - `mysql` / `postgresql` / `mariadb` / `tidb` / `doris` / `starrocks` / `oceanbase` / `oracle` / `sqlserver`：必填 host、port、dbName、username、password
             - `mongodb`：必填 host、port、dbName；username、password 可空（支持无认证部署）
+            - `mariadb` / `tidb` / `doris` / `starrocks` / `oceanbase` 为 MySQL 协议兼容，连接参数与 mysql 一致
         host:
           type: string
           description: 数据库主机
@@ -808,12 +997,52 @@ components:
           example: my_database
         username:
           type: string
-          description: 登录用户名（mysql/postgresql 必填；mongodb 可空）
+          description: 登录用户名（除 mongodb 外均必填）
           example: root
         password:
           type: string
-          description: 登录密码（mysql/postgresql 必填；mongodb 可空）
+          description: 登录密码（除 mongodb 外均必填；mongodb 可空）
           example: my_password
+
+    UserModelConfigRequest:
+      type: object
+      required: [providerCode, providerType, displayName, apiKey, modelName]
+      properties:
+        providerCode:
+          type: string
+          description: |
+            厂商预设标识：`deepseek` / `openai` / `ollama` / `custom`（自定义 OpenAI 兼容）。
+            取自 GET /model-config/providers 返回的 providerCode。
+          example: deepseek
+        providerType:
+          type: string
+          enum: [openai_compatible]
+          description: 协议类型，当前固定为 `openai_compatible`
+          example: openai_compatible
+        displayName:
+          type: string
+          description: 用户给这套配置起的名字
+          example: 我的 DeepSeek
+          maxLength: 128
+        baseUrl:
+          type: string
+          nullable: true
+          description: |
+            API 地址。省略或为空时复用所选预设的 defaultBaseUrl；
+            `custom` 预设必填。
+          example: https://api.deepseek.com
+          maxLength: 256
+        apiKey:
+          type: string
+          description: |
+            明文 API Key，后端 AES-256-GCM 加密后落库，任何接口都不会回传。
+            编辑配置时传空字符串或省略可保持原密钥不变。
+          example: sk-xxxx
+        modelName:
+          type: string
+          description: 模型名，如 deepseek-v4-pro、gpt-4o
+          example: deepseek-v4-pro
+          maxLength: 128
 
     UnifiedChatRequest:
       type: object
@@ -888,7 +1117,7 @@ components:
           example: 生产环境-主库
         dbType:
           type: string
-          description: 数据库类型（mysql / postgresql / mongodb）
+          description: 数据库类型（mysql / postgresql / mongodb / mariadb / tidb / doris / starrocks / oceanbase / oracle / sqlserver）
           example: mysql
         host:
           type: string
@@ -998,6 +1227,84 @@ components:
           type: boolean
           description: 当前是否为试用版部署
           example: true
+
+    ModelProviderVO:
+      type: object
+      description: 模型厂商预设
+      properties:
+        providerCode:
+          type: string
+          description: 预设标识，创建配置时回传给 providerCode
+          example: deepseek
+        displayName:
+          type: string
+          description: 展示名
+          example: DeepSeek
+        providerType:
+          type: string
+          enum: [openai_compatible]
+          example: openai_compatible
+        defaultBaseUrl:
+          type: string
+          nullable: true
+          description: 预设 API 地址（custom 预设为 null）
+          example: https://api.deepseek.com
+        defaultModel:
+          type: string
+          nullable: true
+          description: 预设推荐模型（custom 预设为 null）
+          example: deepseek-v4-pro
+        builtin:
+          type: boolean
+          description: 是否内置预设（内置不可删除）
+          example: true
+        sortOrder:
+          type: integer
+          description: 排序权重，越小越靠前
+          example: 10
+
+    UserModelConfigVO:
+      type: object
+      description: 用户模型配置（不含任何形式的 API Key）
+      properties:
+        id:
+          type: integer
+          format: int64
+          nullable: true
+          description: 配置 ID；系统兜底配置（providerCode=system）时为 null
+        providerCode:
+          type: string
+          description: 厂商预设标识；`system` 表示系统兜底配置
+          example: deepseek
+        providerType:
+          type: string
+          enum: [openai_compatible]
+          example: openai_compatible
+        displayName:
+          type: string
+          description: 配置名称
+          example: 我的 DeepSeek
+        baseUrl:
+          type: string
+          example: https://api.deepseek.com
+        modelName:
+          type: string
+          example: deepseek-v4-pro
+        isDefault:
+          type: boolean
+          description: 是否为默认配置
+          example: true
+        status:
+          type: integer
+          enum: [0, 1]
+          description: "1=已启用，0=已禁用"
+          example: 1
+        statusDesc:
+          type: string
+          example: 已启用
+        createdAt:
+          type: string
+          format: date-time
 
     SalesContact:
       type: object

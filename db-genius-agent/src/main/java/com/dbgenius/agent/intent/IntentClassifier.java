@@ -1,9 +1,12 @@
 package com.dbgenius.agent.intent;
 
+import com.dbgenius.agent.ChatModelFactory;
+import com.dbgenius.agent.ChatModelSession;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Message;
 import com.dbgenius.model.enums.IntentType;
 import com.dbgenius.model.vo.IntentClassificationResult;
+import com.dbgenius.service.UserModelConfigService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -21,13 +24,15 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class IntentClassifier {
 
-    private final ChatClient chatClient;
+    private final ChatModelFactory chatModelFactory;
+    private final UserModelConfigService userModelConfigService;
 
     public static final double CONFIDENCE_THRESHOLD = 0.7;
 
     public IntentClassificationResult classify(String userMessage,
                                                List<Message> recentHistory,
-                                               ChatContext context) {
+                                               ChatContext context,
+                                               Long userId) {
         String systemPrompt = buildSystemPrompt(context);
         String historyText = formatHistory(recentHistory);
 
@@ -35,7 +40,10 @@ public class IntentClassifier {
 
         log.debug("Classifying intent for message: {}", userMessage);
 
-        return chatClient.prompt()
+        ChatModelSession session = chatModelFactory.createSession(
+                userModelConfigService.getActiveConfig(userId));
+
+        return session.chatClient().prompt()
                 .system(systemPrompt)
                 .user(userPrompt)
                 // 意图分类是每次对话的前置内部调用，thinking 模式只会增加延迟，

@@ -72,3 +72,33 @@ CREATE TABLE IF NOT EXISTS sales_contact (
     remark TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- 模型提供商预设表
+CREATE TABLE IF NOT EXISTS model_provider (
+    id BIGSERIAL PRIMARY KEY,
+    provider_code VARCHAR(32) NOT NULL UNIQUE,
+    display_name VARCHAR(64) NOT NULL,
+    provider_type VARCHAR(32) NOT NULL DEFAULT 'openai_compatible',
+    default_base_url VARCHAR(256),
+    default_model VARCHAR(128),
+    builtin SMALLINT NOT NULL DEFAULT 0,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- 用户模型配置表（API Key AES-256-GCM 加密存储）
+CREATE TABLE IF NOT EXISTS user_model_config (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES sys_user(id),
+    provider_code VARCHAR(32),
+    provider_type VARCHAR(32) NOT NULL DEFAULT 'openai_compatible',
+    display_name VARCHAR(128) NOT NULL,
+    base_url VARCHAR(256) NOT NULL,
+    api_key_encrypted TEXT NOT NULL,
+    model_name VARCHAR(128) NOT NULL,
+    is_default SMALLINT NOT NULL DEFAULT 0,
+    status SMALLINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);

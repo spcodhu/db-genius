@@ -69,7 +69,7 @@ public class IntentRouter {
 
                 // 5. LLM 分类
                 IntentClassificationResult result = classifier.classify(
-                        request.getMessage(), history, context);
+                        request.getMessage(), history, context, userId);
 
                 log.info("[IntentRouter] classified intent={}, confidence={}, needsClarification={}",
                         result.intent(), result.confidence(), result.needsClarification());
