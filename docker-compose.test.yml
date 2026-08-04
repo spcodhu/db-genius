@@ -1,0 +1,254 @@
+name: db-genius-test
+
+###############################################################################
+# DB-Genius 全量测试环境（独立于根目录 docker-compose.yml，互不影响）
+#
+# 内容：后端 app + 系统库 PostgreSQL（自动执行 schema.sql）+ RabbitMQ
+#       + 全部 10 种待测目标数据库
+#
+# 用法（在测试服务器项目根目录执行）：
+#   cp deploy/test/.env.example deploy/test/.env   # 填入 DEEPSEEK_API_KEY 等
+#   docker compose -f docker-compose.test.yml --env-file deploy/test/.env up -d --build
+#
+# 资源预估：全套容器约需 12~16GB 内存（Oracle/SQL Server/Doris/StarRocks/
+# OceanBase 都较重），低配机器建议注释掉暂不需要的数据库服务。
+#
+# 容器网络内连接信息（在 app 中创建 db-config 时使用）：
+#   类型         host             port   账号 / 密码              dbName
+#   MySQL        mysql-test       3306   root / DbGenius!234      demo
+#   PostgreSQL   postgres-test    5432   demo / DbGenius!234      demo
+#   MongoDB      mongo-test       27017  root / DbGenius!234      admin
+#   MariaDB      mariadb-test     3306   demo / DbGenius!234      demo
+#   TiDB         tidb-test        4000   root / （空密码）         test
+#   Doris        doris-test       9030   root / （空密码）         demo（需先建库）
+#   StarRocks    starrocks-test   9030   root / （空密码）         demo（需先建库）
+#   OceanBase    oceanbase-test   2881   root@test / DbGenius!234 test（需先建库）
+#   Oracle       oracle-test      1521   demo / DbGenius!234      XEPDB1（service name）
+#   SQL Server   sqlserver-test   1433   sa / DbGenius!234        master
+#
+# 注意：所有密码仅供测试环境使用，严禁复用到生产。
+###############################################################################
+
+services:
+
+  # ---------- 后端应用 ----------
+  app:
+    build: .
+    ports:
+      - "${SERVER_PORT:-8109}:8109"
+    environment:
+      # 系统库指向 compose 内的 postgres-system（schema 由挂载的 schema.sql 自动初始化）
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-system:5432/db_genius?currentSchema=app
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_SYSTEM_PASSWORD:-postgres}
+      # MQ 与 app 同在 compose 网络，用服务名互连
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${SPRING_RABBITMQ_USERNAME:-guest}
+      SPRING_RABBITMQ_PASSWORD: ${SPRING_RABBITMQ_PASSWORD:-guest}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DB_GENIUS_ENCRYPT_KEY: ${DB_GENIUS_ENCRYPT_KEY}
+      ALIYUN_OSS_ENDPOINT: ${ALIYUN_OSS_ENDPOINT}
+      ALIYUN_OSS_BUCKET: ${ALIYUN_OSS_BUCKET}
+      ALIYUN_ACCESS_KEY_ID: ${ALIYUN_ACCESS_KEY_ID}
+      ALIYUN_ACCESS_KEY_SECRET: ${ALIYUN_ACCESS_KEY_SECRET}
+      ALIYUN_OSS_DIR_PREFIX: ${ALIYUN_OSS_DIR_PREFIX:-uploads/}
+      ALIYUN_OCR_ENABLED: ${ALIYUN_OCR_ENABLED:-false}
+      ALIYUN_OCR_ENDPOINT: ${ALIYUN_OCR_ENDPOINT:-ocr-api.cn-hangzhou.aliyuncs.com}
+      # 试用版预置库默认指向 compose 内的 mysql-test（开关默认关闭）
+      DB_GENIUS_TRIAL_ENABLED: ${DB_GENIUS_TRIAL_ENABLED:-false}
+      DB_GENIUS_TRIAL_BUILTIN_HOST: mysql-test
+      DB_GENIUS_TRIAL_BUILTIN_PORT: 3306
+      DB_GENIUS_TRIAL_BUILTIN_DB_NAME: demo
+      DB_GENIUS_TRIAL_BUILTIN_USERNAME: root
+      DB_GENIUS_TRIAL_BUILTIN_PASSWORD: DbGenius!234
+    depends_on:
+      postgres-system:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------- 系统库（users/configs/conversations）----------
+  postgres-system:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: db_genius
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SYSTEM_PASSWORD:-postgres}
+    volumes:
+      - pg_system_data:/var/lib/postgresql/data
+      # 首次启动自动建 app schema 与全部业务表（仅空库初始化时执行一次）
+      - ./db-genius-web/src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d db_genius"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ---------- 消息队列 ----------
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ---------- 待测目标库：MySQL ----------
+  mysql-test:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: DbGenius!234
+      MYSQL_DATABASE: demo
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pDbGenius!234"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------- 待测目标库：PostgreSQL ----------
+  postgres-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: demo
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: DbGenius!234
+    volumes:
+      - pg_target_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d demo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ---------- 待测目标库：MongoDB ----------
+  mongo-test:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: DbGenius!234
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet -u root -p 'DbGenius!234' --authenticationDatabase admin --eval \"db.adminCommand('ping')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------- 待测目标库：MariaDB ----------
+  mariadb-test:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: DbGenius!234
+      MARIADB_DATABASE: demo
+      MARIADB_USER: demo
+      MARIADB_PASSWORD: DbGenius!234
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------- 待测目标库：TiDB（unistore 单机模式，仅供测试）----------
+  tidb-test:
+    image: pingcap/tidb:latest
+    command: ["--store=unistore", "--path=/tmp/tidb"]
+    ports:
+      - "4000:4000"
+    restart: unless-stopped
+
+  # ---------- 待测目标库：Doris（FE+BE all-in-one，启动需 1~2 分钟）----------
+  doris-test:
+    image: apache/doris:doris-all-in-one-2.1.0
+    # BE 进程使用共享内存，默认 64MB 不足，与宿主机内存大小无关
+    shm_size: 1g
+    ports:
+      - "9030:9030"   # FE MySQL 协议端口（适配器连接用）
+      - "8030:8030"   # FE HTTP 端口（Web UI）
+    restart: unless-stopped
+
+  # ---------- 待测目标库：StarRocks（FE+BE all-in-one，启动需 1~2 分钟）----------
+  starrocks-test:
+    image: starrocks/allin1-ubuntu:latest
+    # BE 进程使用共享内存，默认 64MB 不足，与宿主机内存大小无关
+    shm_size: 1g
+    ports:
+      - "19030:9030"  # 与 Doris 内部端口相同，宿主机侧错开
+      - "18030:8030"
+    restart: unless-stopped
+
+  # ---------- 待测目标库：OceanBase（mini 模式，首次启动需 3~5 分钟自建集群）----------
+  oceanbase-test:
+    image: oceanbase/oceanbase-ce:4.3.5.1
+    environment:
+      MODE: mini
+      OB_TENANT_PASSWORD: DbGenius!234   # test 租户 root 密码
+    volumes:
+      - oceanbase_data:/root/ob
+    ports:
+      - "2881:2881"
+    restart: unless-stopped
+
+  # ---------- 待测目标库：Oracle XE（service：XEPDB1，自动创建 demo 用户）----------
+  oracle-test:
+    image: gvenzl/oracle-xe:21-slim
+    # Oracle AMM 把 SGA 放在 /dev/shm，默认 64MB 会导致启动失败，与宿主机内存大小无关
+    shm_size: 2g
+    environment:
+      ORACLE_PASSWORD: DbGenius!234      # SYS/SYSTEM 密码
+      APP_USER: demo                     # 自动创建的业务用户（schema 同名）
+      APP_USER_PASSWORD: DbGenius!234
+    volumes:
+      - oracle_data:/opt/oracle/oradata
+    ports:
+      - "1521:1521"
+    restart: unless-stopped
+
+  # ---------- 待测目标库：SQL Server ----------
+  sqlserver-test:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: DbGenius!234
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    ports:
+      - "1433:1433"
+    restart: unless-stopped
+
+volumes:
+  pg_system_data:
+  rabbitmq_data:
+  mysql_data:
+  pg_target_data:
+  mongo_data:
+  mariadb_data:
+  oceanbase_data:
+  oracle_data:
+  sqlserver_data:
