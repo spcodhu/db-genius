@@ -289,6 +289,26 @@ All SSE events follow this JSON format:
 | `error` | Error details |
 | `done` | Stream end signal |
 
+### Message Persistence
+
+`message` 表除 `role/content/step/type` 外，还持久化以下字段：
+
+| Column | Description |
+|--------|-------------|
+| `reasoning_content` | 模型思考内容（供应商未返回时为 NULL） |
+| `tool_calls` | 工具调用记录 JSON：`[{id,type,name,arguments}]`（无调用为 NULL） |
+
+`type` 语义：
+
+| type | role | Description |
+|------|------|-------------|
+| `user` | user | 用户消息 |
+| `summary` | assistant | 最终回答（simple chat 与 agent 流程共用） |
+| `step` | assistant | Agent 每步的 assistant 消息（正文 + 思考 + 工具调用），`step` 列与 SSE 步骤对齐 |
+| `tool` | tool | Agent 每步工具执行结果，content 为 `[{id,name,result}]` JSON |
+
+上下文注入（意图分类、历史消息）只取 `user`/`summary`，`step`/`tool` 过程消息仅用于前端回显；历史推理不会回传给模型（`reasoning_content` 回传仅在同一轮 tool-call 会话内由 `ReasoningChatModel` 处理）。
+
 ## Environment Variables
 
 | Variable | Description | Required |

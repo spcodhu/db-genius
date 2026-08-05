@@ -2,6 +2,7 @@ package com.dbgenius.agent;
 
 import com.dbgenius.agent.model.AgentState;
 import com.dbgenius.model.vo.SseEvent;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -27,6 +28,35 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ToolCallAgent extends ReActAgent {
 
+    /**
+     * Agent 每步消息的落库回调，由 Handler 装配（类似 {@link #setSummaryCallback}）。
+     * 默认空实现，不装配则行为与现状一致（仅内存流转、不落过程消息）。
+     */
+    public interface AgentMessageSink {
+
+        /**
+         * 一步思考完成的 assistant 消息。
+         *
+         * @param step             步骤号（1 起，与 SSE step 对齐）
+         * @param content          模型正文（纯工具调用轮次可能为空串）
+         * @param reasoningContent 归一化后的思考内容，无则为 null
+         * @param toolCallsJson    [{id,type,name,arguments}] JSON 文本，无工具调用则为 null
+         */
+        default void onAssistant(int step, String content, String reasoningContent, String toolCallsJson) {
+        }
+
+        /**
+         * 一步工具执行结果。
+         *
+         * @param step               步骤号
+         * @param toolResponsesJson  [{id,name,result}] JSON 文本（一步多工具时为数组）
+         */
+        default void onToolResponses(int step, String toolResponsesJson) {
+        }
+    }
+
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
     protected final ToolCallback[] availableTools;
     protected final ChatClient chatClient;
     protected final ReasoningChatModel reasoningChatModel;
@@ -34,6 +64,7 @@ public class ToolCallAgent extends ReActAgent {
     protected final ChatOptions chatOptions;
 
     private ChatResponse toolCallChatResponse;
+    private AgentMessageSink messageSink;
 
     public ToolCallAgent(String name, String systemPrompt, String nextStepPrompt,
                          int maxSteps, ChatClient chatClient, ReasoningChatModel reasoningChatModel,
@@ -60,6 +91,10 @@ public class ToolCallAgent extends ReActAgent {
             optionsBuilder.toolContext(toolContext);
         }
         this.chatOptions = optionsBuilder.build();
+    }
+
+    public void setMessageSink(AgentMessageSink messageSink) {
+        this.messageSink = messageSink;
     }
 
     @Override
@@ -106,6 +141,13 @@ public class ToolCallAgent extends ReActAgent {
         String result = assistantMessage.getText();
         log.info("[{}] thinking: {}", name, result);
 
+        // 落库回调：本步思考内容 + 模型发出的工具调用记录（无论是否调用工具都记录）
+        if (messageSink != null) {
+            messageSink.onAssistant(currentStep, result != null ? result : "",
+                    ReasoningChatModel.normalizeReasoningContent(assistantMessage.getMetadata()),
+                    toToolCallsJson(toolCalls));
+        }
+
         if (toolCalls == null || toolCalls.isEmpty()) {
             messageList.add(assistantMessage);
             return false;
@@ -145,9 +187,48 @@ public class ToolCallAgent extends ReActAgent {
                 .map(response -> "Tool " + response.name() + " result: " + response.responseData())
                 .collect(Collectors.joining("\n"));
 
+        // 落库回调：本步工具执行结果
+        if (messageSink != null) {
+            messageSink.onToolResponses(currentStep, toToolResponsesJson(toolResponseMessage.getResponses()));
+        }
+
         log.info("[{}] act results: {}", name,
                 results.length() > 300 ? results.substring(0, 300) + "..." : results);
         return results;
+    }
+
+    /** 工具调用记录序列化为 [{id,type,name,arguments}] JSON；无调用返回 null。 */
+    private String toToolCallsJson(List<AssistantMessage.ToolCall> toolCalls) {
+        if (toolCalls == null || toolCalls.isEmpty()) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(toolCalls);
+        } catch (Exception e) {
+            log.warn("[{}] Failed to serialize tool calls", name, e);
+            return null;
+        }
+    }
+
+    /** 工具执行结果序列化为 [{id,name,result}] JSON（一步多工具时为数组）；无结果返回 null。 */
+    private String toToolResponsesJson(List<ToolResponseMessage.ToolResponse> responses) {
+        if (responses == null || responses.isEmpty()) {
+            return null;
+        }
+        try {
+            List<Map<String, Object>> records = new ArrayList<>(responses.size());
+            for (ToolResponseMessage.ToolResponse response : responses) {
+                Map<String, Object> record = new java.util.LinkedHashMap<>();
+                record.put("id", response.id());
+                record.put("name", response.name());
+                record.put("result", response.responseData());
+                records.add(record);
+            }
+            return objectMapper.writeValueAsString(records);
+        } catch (Exception e) {
+            log.warn("[{}] Failed to serialize tool responses", name, e);
+            return null;
+        }
     }
 
     private static final String SUMMARY_SYSTEM_PROMPT = """

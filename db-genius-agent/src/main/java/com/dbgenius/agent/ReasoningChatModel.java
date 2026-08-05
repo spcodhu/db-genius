@@ -59,6 +59,41 @@ public class ReasoningChatModel implements ChatModel {
     /** 与 {@link OpenAiChatModel} 一致的 metadata key，下游统一按此读取推理内容。 */
     public static final String REASONING_CONTENT_KEY = "reasoningContent";
 
+    /** 备用 metadata key：防御 Spring AI 升级或供应商映射差异（OpenAI 兼容协议下各厂商字段名不一）。 */
+    private static final String[] REASONING_FALLBACK_KEYS = {"reasoning_content", "thinking", "reasoning"};
+
+    /**
+     * 归一化模型推理内容，兼容不同供应商/Spring AI 版本的字段差异。
+     *
+     * <p>OpenAI 兼容协议下推理模型（DeepSeek、OpenAI o 系、Qwen3、Kimi、GLM 等）
+     * 统一返回 {@code reasoning_content}，Spring AI 解析后放入 AssistantMessage metadata
+     * 的 {@link #REASONING_CONTENT_KEY}；非推理模型（Ollama、gpt-4o 等）则缺失或为空串
+     * （{@code call()} 路径写入 ""）。本方法依次探测主 key 与备用 key，trim 后为空即返回
+     * {@code null}，落库统一为 NULL，不存空串。
+     *
+     * @param metadata AssistantMessage 的 metadata
+     * @return 归一化后的推理内容；缺失或空白返回 null
+     */
+    public static String normalizeReasoningContent(Map<String, Object> metadata) {
+        if (metadata == null) {
+            return null;
+        }
+        Object value = metadata.get(REASONING_CONTENT_KEY);
+        if (value == null) {
+            for (String fallbackKey : REASONING_FALLBACK_KEYS) {
+                value = metadata.get(fallbackKey);
+                if (value != null) {
+                    break;
+                }
+            }
+        }
+        if (value == null) {
+            return null;
+        }
+        String reasoning = value.toString().strip();
+        return reasoning.isEmpty() ? null : reasoning;
+    }
+
     private final OpenAiApi openAiApi;
     private final OpenAiChatModel delegate;
     private final OpenAiChatOptions defaultOptions;

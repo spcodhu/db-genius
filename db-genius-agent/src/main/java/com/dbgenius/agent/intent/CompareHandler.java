@@ -4,6 +4,7 @@ import com.dbgenius.agent.ChatModelFactory;
 import com.dbgenius.agent.ChatModelSession;
 import com.dbgenius.agent.DbCompareAgent;
 import com.dbgenius.agent.ReasoningChatModel;
+import com.dbgenius.agent.ToolCallAgent;
 import com.dbgenius.agent.tool.DbCompareTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
@@ -102,6 +103,20 @@ public class CompareHandler implements IntentHandler {
         agent.setExecutor(chatTaskExecutor);
         agent.setSummaryCallback(markdown ->
                 conversationService.saveMessage(conversation.getId(), "assistant", markdown, -1, "summary"));
+        agent.setMessageSink(new ToolCallAgent.AgentMessageSink() {
+            @Override
+            public void onAssistant(int step, String content, String reasoningContent, String toolCallsJson) {
+                conversationService.saveMessage(conversation.getId(), "assistant", content, step, "step",
+                        reasoningContent, toolCallsJson);
+            }
+
+            @Override
+            public void onToolResponses(int step, String toolResponsesJson) {
+                if (toolResponsesJson != null) {
+                    conversationService.saveMessage(conversation.getId(), "tool", toolResponsesJson, step, "tool");
+                }
+            }
+        });
         agent.runStream(message, taskId, emitter);
     }
 

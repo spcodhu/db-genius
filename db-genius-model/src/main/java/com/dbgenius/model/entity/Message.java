@@ -22,6 +22,12 @@ public class Message {
 
     private String type;
 
+    /** 模型思考内容（reasoning_content），供应商不返回或为空时为 NULL */
+    private String reasoningContent;
+
+    /** 工具调用记录 JSON 文本（[{id,type,name,arguments}]），无工具调用时为 NULL */
+    private String toolCalls;
+
     private String fileUrl;
 
     @TableField(fill = FieldFill.INSERT)

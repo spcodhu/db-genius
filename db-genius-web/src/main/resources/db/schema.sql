@@ -51,9 +51,15 @@ CREATE TABLE IF NOT EXISTS message (
     content TEXT NOT NULL,
     step INT,
     type VARCHAR(32),
+    reasoning_content TEXT,
+    tool_calls TEXT,
     file_url TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- 存量库升级（幂等，可重复执行）：为 message 表补充思考内容与工具调用记录列
+ALTER TABLE message ADD COLUMN IF NOT EXISTS reasoning_content TEXT;
+ALTER TABLE message ADD COLUMN IF NOT EXISTS tool_calls TEXT;
 
 CREATE TABLE IF NOT EXISTS uploaded_file (
     id BIGSERIAL PRIMARY KEY,

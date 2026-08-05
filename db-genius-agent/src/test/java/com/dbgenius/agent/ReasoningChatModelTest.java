@@ -157,6 +157,39 @@ class ReasoningChatModelTest {
         assertThat(response.getResult().getMetadata().getFinishReason()).isEqualTo("TOOL_CALLS");
     }
 
+    @Test
+    void normalizeReasoningShouldReturnNullForMissingOrBlank() {
+        assertThat(ReasoningChatModel.normalizeReasoningContent(null)).isNull();
+        assertThat(ReasoningChatModel.normalizeReasoningContent(Map.of())).isNull();
+        assertThat(ReasoningChatModel.normalizeReasoningContent(
+                Map.of(ReasoningChatModel.REASONING_CONTENT_KEY, ""))).isNull();
+        assertThat(ReasoningChatModel.normalizeReasoningContent(
+                Map.of(ReasoningChatModel.REASONING_CONTENT_KEY, "   "))).isNull();
+    }
+
+    @Test
+    void normalizeReasoningShouldTrimAndSupportFallbackKeys() {
+        // 主 key 正常内容，trim 后返回
+        assertThat(ReasoningChatModel.normalizeReasoningContent(
+                Map.of(ReasoningChatModel.REASONING_CONTENT_KEY, "  思考内容  "))).isEqualTo("思考内容");
+
+        // 供应商/Spring AI 版本差异：备用 key 兜底（reasoning_content / thinking / reasoning）
+        assertThat(ReasoningChatModel.normalizeReasoningContent(
+                Map.of("reasoning_content", "snake_case_key"))).isEqualTo("snake_case_key");
+        assertThat(ReasoningChatModel.normalizeReasoningContent(
+                Map.of("thinking", "thinking_key"))).isEqualTo("thinking_key");
+        assertThat(ReasoningChatModel.normalizeReasoningContent(
+                Map.of("reasoning", "reasoning_key"))).isEqualTo("reasoning_key");
+
+        // 非 String 值也兼容（toString）
+        assertThat(ReasoningChatModel.normalizeReasoningContent(
+                Map.of(ReasoningChatModel.REASONING_CONTENT_KEY, 123))).isEqualTo("123");
+
+        // 主 key 存在但为空时优先主 key（返回 null），不落到备用 key
+        assertThat(ReasoningChatModel.normalizeReasoningContent(
+                Map.of(ReasoningChatModel.REASONING_CONTENT_KEY, "", "thinking", "fallback"))).isNull();
+    }
+
     private ChatCompletionChunk chunk(ChatCompletionMessage delta, ChatCompletionFinishReason finishReason) {
         return new ChatCompletionChunk("chatcmpl-stream-1",
                 List.of(new ChatCompletionChunk.ChunkChoice(finishReason, 0, delta, null)),

@@ -1,6 +1,7 @@
 package com.dbgenius.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dbgenius.common.exception.BusinessException;
 import com.dbgenius.common.util.AesUtil;
@@ -139,8 +140,8 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
         if (config.getStatus() != ModelConfigStatus.ENABLED) {
             throw new BusinessException("已禁用的配置不能设为默认");
         }
-        // 先取消用户所有默认
-        update(new LambdaQueryWrapper<UserModelConfig>()
+        // 先取消用户所有默认（set 仅存在于 LambdaUpdateWrapper）
+        update(new LambdaUpdateWrapper<UserModelConfig>()
                 .eq(UserModelConfig::getUserId, userId)
                 .eq(UserModelConfig::getIsDefault, true)
                 .set(UserModelConfig::getIsDefault, false));

@@ -25,6 +25,7 @@ import reactor.core.Disposable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -95,6 +96,7 @@ public class SimpleChatHandler implements IntentHandler {
         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
         StringBuilder fullContent = new StringBuilder();
+        StringBuilder fullReasoning = new StringBuilder();
 
         ChatModelSession session = chatModelFactory.createSession(
                 userModelConfigService.getActiveConfig(userId));
@@ -110,10 +112,11 @@ public class SimpleChatHandler implements IntentHandler {
                                 return;
                             }
                             var output = chatResponse.getResult().getOutput();
-                            // thinking 模式的推理增量，与正文分通道推送
+                            // thinking 模式的推理增量，与正文分通道推送并累积待落库
                             Object reasoning = output.getMetadata()
                                     .get(ReasoningChatModel.REASONING_CONTENT_KEY);
                             if (reasoning instanceof String reasoningDelta && !reasoningDelta.isEmpty()) {
+                                fullReasoning.append(reasoningDelta);
                                 sendEvent(emitter, SseEvent.of(taskId, 0, "reasoning", reasoningDelta));
                             }
                             String token = output.getText();
@@ -129,7 +132,11 @@ public class SimpleChatHandler implements IntentHandler {
                         },
                         () -> {
                             conversationService.saveMessage(
-                                    conversation.getId(), "assistant", fullContent.toString(), -1, "summary");
+                                    conversation.getId(), "assistant", fullContent.toString(), -1, "summary",
+                                    ReasoningChatModel.normalizeReasoningContent(
+                                            Map.of(ReasoningChatModel.REASONING_CONTENT_KEY,
+                                                    fullReasoning.toString())),
+                                    null);
                             sendEvent(emitter, SseEvent.done(taskId));
                             emitter.complete();
                         }
