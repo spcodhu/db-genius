@@ -20,7 +20,7 @@
 ## 部署步骤
 
 ```bash
-# 1. 准备环境变量（填入 DEEPSEEK_API_KEY / 加密密钥 / OSS 等）
+# 1. 准备环境变量（填入 DB_GENIUS_DEFAULT_MODEL_API_KEY / 加密密钥 / OSS 等）
 cp deploy/test/.env.example deploy/test/.env
 
 # 2. 构建并启动全套容器（在项目根目录执行）

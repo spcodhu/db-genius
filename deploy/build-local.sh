@@ -128,7 +128,7 @@ check_env_file() {
 
     # shellcheck source=/dev/null
     source "${env_file}"
-    local required=("SPRING_DATASOURCE_URL" "SPRING_DATASOURCE_USERNAME" "SPRING_DATASOURCE_PASSWORD" "DEEPSEEK_API_KEY" "DB_GENIUS_ENCRYPT_KEY")
+    local required=("SPRING_DATASOURCE_URL" "SPRING_DATASOURCE_USERNAME" "SPRING_DATASOURCE_PASSWORD" "DB_GENIUS_DEFAULT_MODEL_API_KEY" "DB_GENIUS_ENCRYPT_KEY")
     for var in "${required[@]}"; do
         if [ -z "${!var:-}" ]; then
             log_err ".env 中 ${var} 不能为空"

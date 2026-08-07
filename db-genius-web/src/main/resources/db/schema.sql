@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS db_config (
     username VARCHAR(128) NOT NULL,
     password_encrypted TEXT NOT NULL,
     status SMALLINT NOT NULL DEFAULT 0,
-    builtin SMALLINT NOT NULL DEFAULT 0,
+    builtin BOOLEAN NOT NULL DEFAULT FALSE,
     doc_content TEXT,
     doc_generated_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS model_provider (
     provider_type VARCHAR(32) NOT NULL DEFAULT 'openai_compatible',
     default_base_url VARCHAR(256),
     default_model VARCHAR(128),
-    builtin SMALLINT NOT NULL DEFAULT 0,
+    builtin BOOLEAN NOT NULL DEFAULT FALSE,
     sort_order INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS user_model_config (
     base_url VARCHAR(256) NOT NULL,
     api_key_encrypted TEXT NOT NULL,
     model_name VARCHAR(128) NOT NULL,
-    is_default SMALLINT NOT NULL DEFAULT 0,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
     status SMALLINT NOT NULL DEFAULT 1,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()

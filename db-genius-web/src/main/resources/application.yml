@@ -6,6 +6,17 @@ server:
 spring:
   application:
     name: db-genius
+  ai:
+    model:
+      # 模型由 ChatModelFactory 运行时动态创建，禁用 Spring AI 默认激活的
+      # OpenAI 自动配置（matchIfMissing=true），否则启动时缺 api-key 报错
+      chat: ""
+      embedding: ""
+      image: ""
+      audio:
+        speech: ""
+        transcription: ""
+      moderation: ""
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/db_genius?currentSchema=app}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}

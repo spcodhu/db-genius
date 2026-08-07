@@ -66,7 +66,7 @@ check_env_file() {
     fi
     # shellcheck source=/dev/null
     source "${env_file}"
-    local required=("DEEPSEEK_API_KEY" "DB_GENIUS_ENCRYPT_KEY")
+    local required=("DB_GENIUS_DEFAULT_MODEL_API_KEY" "DB_GENIUS_ENCRYPT_KEY")
     for var in "${required[@]}"; do
         if [ -z "${!var:-}" ]; then
             log_err ".env 中 ${var} 不能为空"

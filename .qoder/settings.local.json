@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(cd /Users/spcodhu/Code/backend/java/db-genius && ./mvnw clean package -DskipTests > /tmp/dbgenius-build.log 2>&1; echo \"MVN_EXIT=$?\")",
+      "Bash(cd /Users/spcodhu/Code/backend/java/db-genius && set -a && source .env && set +a && java -jar db-genius-web/target/db-genius-web-1.0.0.jar > /tmp/dbgenius-run.log 2>&1 & echo \"PID=$!\")",
+      "Bash(grep \"SPRING_DATASOURCE_URL\" /Users/spcodhu/Code/backend/java/db-genius/.env; kill 27243 2>/dev/null; cd /Users/spcodhu/Code/backend/java/db-genius && set -a && source .env && set +a && export SPRING_DATASOURCE_URL=\"${SPRING_DATASOURCE_URL}?currentSchema=app\" && java -jar db-genius-web/target/db-genius-web-1.0.0.jar > /tmp/dbgenius-run2.log 2>&1 & echo \"PID=$!\")"
+    ]
+  }
+}
