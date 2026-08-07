@@ -62,6 +62,18 @@ public class SqlQueryHandler implements IntentHandler {
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
                        IntentClassificationResult classification, Long userId) {
         List<Long> dbConfigIds = request.getDbConfigIds();
+
+        // 先建会话并下发 conversation 事件、落库本轮用户消息，保证即使后续前置校验失败，
+        // 会话与首条消息也已持久化，客户端重试可携带会话 id 复用会话、恢复上下文
+        ConversationVO conversation = getOrCreateConversation(userId, request,
+                dbConfigIds == null || dbConfigIds.isEmpty() ? List.of() : dbConfigIds);
+        sendEvent(emitter, SseEvent.of(taskId, 0, "conversation", conversation.getId()));
+
+        // 先取历史再保存本轮用户消息，避免把当前消息重复塞进历史
+        List<org.springframework.ai.chat.messages.Message> historyMessages =
+                toHistoryMessages(conversationService.getRecentMessages(conversation.getId(), HISTORY_SIZE));
+        conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
+
         if (dbConfigIds == null || dbConfigIds.isEmpty()) {
             throw new IllegalArgumentException("SQL 查询需要至少选择一个数据库配置");
         }
@@ -69,14 +81,6 @@ public class SqlQueryHandler implements IntentHandler {
         validateDbConfigs(userId, dbConfigIds);
         String dbDoc = buildDbDocContext(userId, dbConfigIds);
         String dialectContext = buildDialectContext(dbConfigIds);
-
-        ConversationVO conversation = getOrCreateConversation(userId, request, dbConfigIds);
-        sendEvent(emitter, SseEvent.of(taskId, 0, "conversation", conversation.getId()));
-
-        // 先取历史再保存本轮用户消息，避免把当前消息重复塞进历史
-        List<org.springframework.ai.chat.messages.Message> historyMessages =
-                toHistoryMessages(conversationService.getRecentMessages(conversation.getId(), HISTORY_SIZE));
-        conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
         ChatModelSession session = chatModelFactory.createSession(
                 userModelConfigService.getActiveConfig(userId));
@@ -176,7 +180,7 @@ public class SqlQueryHandler implements IntentHandler {
                 return vo;
             }
         }
-        String configIdsStr = dbConfigIds.stream()
+        String configIdsStr = dbConfigIds == null ? "" : dbConfigIds.stream()
                 .map(String::valueOf).collect(Collectors.joining(","));
         return conversationService.createConversation(
                 userId, request.getMessage(), IntentType.SQL_QUERY.getCode(), configIdsStr);
