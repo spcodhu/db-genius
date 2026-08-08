@@ -190,13 +190,15 @@ public class ReasoningChatModel implements ChatModel {
             ChatCompletionChunk.ChunkChoice choice = choices.get(0);
             ChatCompletionMessage delta = choice.delta();
             if (delta != null) {
-                if (StringUtils.hasText(delta.reasoningContent())) {
+                // 只跳过 null/空串，不能用 hasText：LLM 常把 "\n" 作为独立增量帧发出，
+                // hasText 会把纯空白帧整体丢弃，导致前端与聚合体系统性丢失换行
+                if (delta.reasoningContent() != null && !delta.reasoningContent().isEmpty()) {
                     reasoningBuilder.append(delta.reasoningContent());
                     if (reasoningDeltaConsumer != null) {
                         reasoningDeltaConsumer.accept(delta.reasoningContent());
                     }
                 }
-                if (StringUtils.hasText(delta.content())) {
+                if (delta.content() != null && !delta.content().isEmpty()) {
                     contentBuilder.append(delta.content());
                     if (contentDeltaConsumer != null) {
                         contentDeltaConsumer.accept(delta.content());
