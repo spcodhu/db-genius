@@ -49,7 +49,7 @@ public class ChatModelFactory {
      * 根据用户模型配置创建一个完整的会话模型组合。
      *
      * @param config 用户配置（含 apiKey；如果是 fallback，"system" provider 的 key 为明文）
-     * @return ChatModelSession，包含 chatClient + agentChatClient + 底层模型引用
+     * @return ChatModelSession，包含 chatClient + 底层模型引用
      */
     public ChatModelSession createSession(UserModelConfig config) {
         return createSession(config, null);
@@ -101,9 +101,8 @@ public class ChatModelFactory {
         }
 
         ChatClient chatClient = ChatClient.builder(effectiveChatModel).build();
-        ChatClient agentChatClient = ChatClient.builder(reasoningModel).build();
 
-        return new ChatModelSession(effectiveChatModel, reasoningModel, chatClient, agentChatClient);
+        return new ChatModelSession(effectiveChatModel, reasoningModel, chatClient);
     }
 
     private String resolveApiKey(UserModelConfig config) {

@@ -116,7 +116,7 @@ public class WorkflowHandler implements IntentHandler {
                 userModelConfigService.getActiveConfig(userId), tokenUsage);
 
         DbWorkflowAgent agent = new DbWorkflowAgent(
-                session.agentChatClient(), session.reasoningModel(), sqlExecuteTool, fileReadTool, imageReadTool, terminateTool,
+                session.reasoningModel(), sqlExecuteTool, fileReadTool, imageReadTool, terminateTool,
                 dbDoc, hasFiles, toolContext);
         agent.setHistoryMessages(historyMessages);
         agent.setExecutor(chatTaskExecutor);

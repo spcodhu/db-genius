@@ -48,6 +48,7 @@ class ReasoningChatModelTest {
         openAiApi = mock(OpenAiApi.class);
         OpenAiChatProperties properties = new OpenAiChatProperties();
         properties.getOptions().setModel("deepseek-v4-pro");
+        properties.getOptions().setStreamUsage(true);
         chatModel = new ReasoningChatModel(openAiApi, null, properties, ToolCallingManager.builder().build());
     }
 
@@ -81,6 +82,8 @@ class ReasoningChatModelTest {
 
         assertThat(request.model()).isEqualTo("deepseek-v4-pro");
         assertThat(request.messages()).hasSize(3);
+        // 非流式请求必须剥离 stream_options，否则供应商 400
+        assertThat(request.streamOptions()).isNull();
         ChatCompletionMessage sentAssistant = request.messages().get(1);
         assertThat(sentAssistant.reasoningContent()).isEqualTo("需要先确认表结构再生成 SQL");
         assertThat(sentAssistant.toolCalls()).hasSize(1);
@@ -142,6 +145,8 @@ class ReasoningChatModelTest {
         verify(openAiApi).chatCompletionStream(captor.capture());
         ChatCompletionRequest request = captor.getValue();
         assertThat(request.stream()).isTrue();
+        assertThat(request.streamOptions()).isNotNull();
+        assertThat(request.streamOptions().includeUsage()).isTrue();
         assertThat(request.messages().get(1).reasoningContent()).isEqualTo("需要先确认表结构再生成 SQL");
         assertThat(request.tools()).isNotEmpty();
 
@@ -155,6 +160,20 @@ class ReasoningChatModelTest {
         assertThat(output.getToolCalls().get(0).name()).isEqualTo("executeSql");
         assertThat(output.getToolCalls().get(0).arguments()).isEqualTo("{\"sql\":\"SELECT 1\"}");
         assertThat(response.getResult().getMetadata().getFinishReason()).isEqualTo("TOOL_CALLS");
+    }
+
+    @Test
+    void shouldEmitContentDeltasToConsumer() {
+        ChatCompletionChunk chunk1 = chunk(contentDelta("## Summary\n\n"), null);
+        ChatCompletionChunk chunk2 = chunk(contentDelta("查询完成。"), ChatCompletionFinishReason.STOP);
+        when(openAiApi.chatCompletionStream(any())).thenReturn(Flux.just(chunk1, chunk2));
+
+        List<String> contentDeltas = new ArrayList<>();
+        ChatResponse response = chatModel.streamAggregated(
+                new Prompt(List.of(new UserMessage("总结"))), null, contentDeltas::add);
+
+        assertThat(contentDeltas).containsExactly("## Summary\n\n", "查询完成。");
+        assertThat(response.getResult().getOutput().getText()).isEqualTo("## Summary\n\n查询完成。");
     }
 
     @Test
@@ -199,6 +218,11 @@ class ReasoningChatModelTest {
     private ChatCompletionMessage delta(String reasoningContent, List<ChatCompletionMessage.ToolCall> toolCalls) {
         return new ChatCompletionMessage(null, ChatCompletionMessage.Role.ASSISTANT,
                 null, null, toolCalls, null, null, null, reasoningContent);
+    }
+
+    private ChatCompletionMessage contentDelta(String content) {
+        return new ChatCompletionMessage(content, ChatCompletionMessage.Role.ASSISTANT,
+                null, null, null, null, null, null, null);
     }
 
     private void stubChatCompletion(String content, String reasoningContent) {

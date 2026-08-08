@@ -4,7 +4,6 @@ import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
 import com.dbgenius.model.vo.SseEvent;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Slf4j
@@ -12,7 +11,7 @@ public class DbSqlAgent extends ToolCallAgent {
 
     private final String dbDocContext;
 
-    public DbSqlAgent(ChatClient chatClient, ReasoningChatModel reasoningChatModel,
+    public DbSqlAgent(ReasoningChatModel reasoningChatModel,
                       SqlExecuteTool sqlExecuteTool, TerminateTool terminateTool,
                       String dbDocContext, String dialectContext) {
         super(
@@ -20,7 +19,6 @@ public class DbSqlAgent extends ToolCallAgent {
                 buildSystemPrompt(dbDocContext, dialectContext),
                 "Based on the user's request, analyze the intent, generate the appropriate SQL, execute it, and report the results. When done, call doTerminate.",
                 10,
-                chatClient,
                 reasoningChatModel,
                 sqlExecuteTool,
                 terminateTool

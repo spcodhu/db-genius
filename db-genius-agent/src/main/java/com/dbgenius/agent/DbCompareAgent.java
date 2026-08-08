@@ -5,13 +5,12 @@ import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
 import com.dbgenius.model.vo.SseEvent;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Slf4j
 public class DbCompareAgent extends ToolCallAgent {
 
-    public DbCompareAgent(ChatClient chatClient, ReasoningChatModel reasoningChatModel,
+    public DbCompareAgent(ReasoningChatModel reasoningChatModel,
                           DbCompareTool dbCompareTool, SqlExecuteTool sqlExecuteTool,
                           TerminateTool terminateTool, String preDbDoc, String testDbDoc) {
         super(
@@ -19,7 +18,6 @@ public class DbCompareAgent extends ToolCallAgent {
                 buildSystemPrompt(preDbDoc, testDbDoc),
                 "Continue the comparison. If structures have been compared, analyze the differences and generate the deployment SQL. When done, call doTerminate.",
                 15,
-                chatClient,
                 reasoningChatModel,
                 dbCompareTool,
                 sqlExecuteTool,

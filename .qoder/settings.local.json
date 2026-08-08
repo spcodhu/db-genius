@@ -11,7 +11,14 @@
       "Bash(ssh -T git@github.com -o BatchMode=yes -o ConnectTimeout=8 2>&1 | head -3; ls ~/.ssh/ 2>/dev/null | head)",
       "Bash(cat ~/.ssh/config 2>/dev/null; git config --get credential.helper; git config --get-all credential.https://github.com.helper 2>/dev/null; echo \"exit ok\")",
       "Read(//Users/spcodhu/.ssh/**)",
-      "Bash(git remote -v && git --no-pager status -sb && git ls-remote origin && git --no-pager log --oneline | wc -l)"
+      "Bash(git remote -v && git --no-pager status -sb && git ls-remote origin && git --no-pager log --oneline | wc -l)",
+      "Bash(ssh:*)",
+      "Bash(grep -rn \"spring-ai\" /Users/spcodhu/Code/backend/java/db-genius/pom.xml | head -20)",
+      "Bash(ls ~/.m2/repository/org/springframework/ai/spring-ai-openai/1.1.8/ 2>/dev/null && cd /tmp && rm -rf sai-inspect && mkdir sai-inspect && cd sai-inspect && unzip -q -o ~/.m2/repository/org/springframework/ai/spring-ai-openai/1.1.8/spring-ai-openai-1.1.8.jar 'org/springframework/ai/openai/OpenAiChatOptions.class' 'org/springframework/ai/openai/api/OpenAiApi$ChatCompletionRequest.class' && javap -p -c 'org/springframework/ai/openai/OpenAiChatOptions.class' 2>/dev/null | grep -i -A2 \"streamUsage\\\\|stream_options\" | head -40)",
+      "Bash(cd /tmp/sai-inspect && unzip -q -o ~/.m2/repository/org/springframework/ai/spring-ai-openai/1.1.8/spring-ai-openai-1.1.8-sources.jar 'org/springframework/ai/openai/OpenAiChatOptions.java' && grep -n -B8 \"streamUsage\" org/springframework/ai/openai/OpenAiChatOptions.java | head -40)",
+      "Bash(cd /tmp/sai-inspect && grep -n -B6 \"private Boolean streamUsage\" org/springframework/ai/openai/OpenAiChatOptions.java)",
+      "Bash(cd /tmp/sai-inspect && grep -n \"streamUsage\\\\|stream_options\\\\|StreamOptions\" org/springframework/ai/openai/OpenAiChatOptions.java)",
+      "Bash(cd /tmp/sai-inspect && unzip -q -o ~/.m2/repository/org/springframework/ai/spring-ai-openai/1.1.8/spring-ai-openai-1.1.8-sources.jar 'org/springframework/ai/openai/OpenAiChatModel.java' && grep -n -B3 -A6 \"streamOptions\\\\|StreamOptions\" org/springframework/ai/openai/OpenAiChatModel.java | head -60)"
     ]
   }
 }

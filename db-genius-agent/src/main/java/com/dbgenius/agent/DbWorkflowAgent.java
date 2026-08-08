@@ -6,7 +6,6 @@ import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
 import com.dbgenius.model.vo.SseEvent;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Map;
@@ -17,7 +16,7 @@ public class DbWorkflowAgent extends ToolCallAgent {
     private final String dbDocContext;
     private final boolean hasFiles;
 
-    public DbWorkflowAgent(ChatClient chatClient, ReasoningChatModel reasoningChatModel,
+    public DbWorkflowAgent(ReasoningChatModel reasoningChatModel,
                            SqlExecuteTool sqlExecuteTool,
                            FileReadTool fileReadTool, ImageReadTool imageReadTool,
                            TerminateTool terminateTool,
@@ -28,7 +27,6 @@ public class DbWorkflowAgent extends ToolCallAgent {
                 buildSystemPrompt(dbDocContext, hasFiles),
                 buildNextStepPrompt(hasFiles),
                 20,
-                chatClient,
                 reasoningChatModel,
                 toolContext,
                 sqlExecuteTool,

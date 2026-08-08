@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
@@ -19,7 +18,6 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -37,7 +35,6 @@ class ToolCallAgentTest {
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     private ReasoningChatModel reasoningChatModel;
-    private ChatClient chatClient;
     private ToolCallAgent.AgentMessageSink sink;
 
     /** 测试用假工具：执行后返回固定文本，不走真实 SQL。 */
@@ -51,17 +48,11 @@ class ToolCallAgentTest {
     @BeforeEach
     void setUp() {
         reasoningChatModel = mock(ReasoningChatModel.class);
-        chatClient = mock(ChatClient.class);
         sink = mock(ToolCallAgent.AgentMessageSink.class);
 
-        // 让 onFinish 的 summary 生成走正常返回，避免 fallback 堆栈噪音
-        ChatClient.ChatClientRequestSpec requestSpec = mock(ChatClient.ChatClientRequestSpec.class);
-        ChatClient.CallResponseSpec callSpec = mock(ChatClient.CallResponseSpec.class);
-        when(chatClient.prompt()).thenReturn(requestSpec);
-        when(requestSpec.messages(anyList())).thenReturn(requestSpec);
-        when(requestSpec.system(anyString())).thenReturn(requestSpec);
-        when(requestSpec.call()).thenReturn(callSpec);
-        when(callSpec.content()).thenReturn("## Summary\n\nmock summary");
+        // 让 onFinish 的流式总结走正常返回，避免 fallback 堆栈噪音
+        when(reasoningChatModel.streamAggregated(any(), any(), any()))
+                .thenReturn(responseOf(AssistantMessage.builder().content("## Summary\n\nmock summary").build()));
     }
 
     @Test
@@ -77,11 +68,16 @@ class ToolCallAgentTest {
 
         // maxSteps=1：只跑一轮 think+act，避免重复循环干扰断言
         ToolCallAgent agent = new ToolCallAgent("TestAgent", "system", null, 1,
-                chatClient, reasoningChatModel, new EchoTool());
+                reasoningChatModel, new EchoTool());
         agent.setMessageSink(sink);
         // 直执行 executor：runStream 同步跑完，无需等待异步
         agent.setExecutor(Runnable::run);
+        StringBuilder summary = new StringBuilder();
+        agent.setSummaryCallback(summary::append);
         agent.runStream("帮我查一下用户表");
+
+        // 流式总结聚合全文后仍经 summaryCallback 落库
+        assertThat(summary.toString()).isEqualTo("## Summary\n\nmock summary");
 
         // think() 载荷：step=1、正文、归一化推理、工具调用 JSON
         ArgumentCaptor<String> contentCaptor = ArgumentCaptor.forClass(String.class);
@@ -119,7 +115,7 @@ class ToolCallAgentTest {
                 .thenReturn(responseOf(assistant));
 
         ToolCallAgent agent = new ToolCallAgent("TestAgent", "system", null, 1,
-                chatClient, reasoningChatModel, new EchoTool());
+                reasoningChatModel, new EchoTool());
         agent.setMessageSink(sink);
         agent.setExecutor(Runnable::run);
         agent.runStream("用户表有多少行？");

@@ -269,7 +269,7 @@ All SSE events follow this JSON format:
 {
   "taskId": "uuid",
   "step": 1,
-  "type": "classifying | classified | clarify | routing | thinking | reasoning | content | sql | result | error | file_parsed | step | summary | done",
+  "type": "classifying | classified | clarify | routing | thinking | reasoning | content | sql | result | error | file_parsed | step | summary_delta | summary | done",
   "content": "...",
   "timestamp": 1719648000000
 }
@@ -285,7 +285,8 @@ All SSE events follow this JSON format:
 | `reasoning` | LLM reasoning content (thinking mode); streaming deltas for both simple chat and agent steps |
 | `content` | Streaming text token for simple chat |
 | `step` | Tool execution result |
-| `summary` | Final Markdown summary |
+| `summary_delta` | Streaming Markdown delta of the final summary (typewriter rendering); may be preceded by `reasoning` deltas |
+| `summary` | Terminal full-text Markdown summary; authoritative content that finalizes (overwrites) any streamed deltas |
 | `error` | Error details |
 | `done` | Stream end signal |
 

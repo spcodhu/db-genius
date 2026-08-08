@@ -296,7 +296,8 @@ paths:
         | `reasoning` | 大模型 thinking 模式的推理内容 | 字符串；`simple_chat` 与 Agent 流程均为流式增量片段 |
         | `step` | 每个 Agent 步骤的结果 | 字符串，SQL 执行结果等 |
         | `content` | 简单会话的流式文本片段 | 字符串 |
-        | `summary` | 最终 Markdown 总结 | Markdown 字符串 |
+        | `summary_delta` | 最终总结的流式 Markdown 增量片段（打字机渲染），其前可能伴随 `reasoning` 增量 | 字符串 |
+        | `summary` | 终态全量 Markdown 总结，作为权威内容覆盖流式增量完成最终渲染 | Markdown 字符串 |
         | `error` | 执行出错 | 字符串，错误信息 |
         | `usage` | 本轮 token 用量统计（done 之前发出） | JSON 对象（TokenUsageVO）：`{"promptTokens": 1200, "completionTokens": 340, "totalTokens": 1540, "contextTokens": 1180, "callCount": 4, "conversationTotalTokens": 6120, "contextWindow": 65536}` |
         | `done` | 流结束信号 | null |
@@ -396,6 +397,14 @@ paths:
                     type: "step"
                     content: "Tool executeSql result: {...}"
                     timestamp: 1719648004000
+                summary_delta:
+                  summary: 总结流式增量（打字机效果）
+                  value:
+                    taskId: "uuid"
+                    step: 2
+                    type: "summary_delta"
+                    content: "## 查询结果\n\n"
+                    timestamp: 1719648004500
                 summary:
                   summary: 任务完成（Markdown 表格）
                   value:
@@ -1488,7 +1497,7 @@ components:
         type:
           type: string
           description: 事件类型
-          enum: [thinking, reasoning, step, summary, error, done,
+          enum: [thinking, reasoning, step, summary_delta, summary, error, done,
                  classifying, classified, clarify, routing, content, usage]
         content:
           description: |
@@ -1501,7 +1510,8 @@ components:
             - reasoning: 大模型 thinking 模式的推理内容（simple_chat 为流式增量，Agent 流程为每 step 一条完整块）
             - step: 工具执行结果（SQL 结果 JSON、文件解析结果 JSON 等）
             - content: 简单会话的流式文本片段
-            - summary: 最终 Markdown 总结；查询结果以表格展示，其他任务按结构化 Markdown 展示
+            - summary_delta: 最终总结的流式 Markdown 增量片段（打字机渲染）
+            - summary: 终态全量 Markdown 总结，权威内容，覆盖流式增量完成最终渲染；查询结果以表格展示，其他任务按结构化 Markdown 展示
             - error: 错误详情
             - usage: {"promptTokens": 1200, "completionTokens": 340, "totalTokens": 1540, "contextTokens": 1180, "callCount": 4, "conversationTotalTokens": 6120, "contextWindow": 65536}（done 之前发出）
             - done: null

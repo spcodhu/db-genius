@@ -148,6 +148,17 @@ public class ReasoningChatModel implements ChatModel {
      * @param reasoningDeltaConsumer 每收到一段 reasoning 增量回调一次，可为 null
      */
     public ChatResponse streamAggregated(Prompt prompt, Consumer<String> reasoningDeltaConsumer) {
+        return streamAggregated(prompt, reasoningDeltaConsumer, null);
+    }
+
+    /**
+     * 同 {@link #streamAggregated(Prompt, Consumer)}，另将 content 增量实时回调
+     * （供总结等场景做前端打字机渲染），可为 null。
+     *
+     * @param contentDeltaConsumer 每收到一段 content 增量回调一次，可为 null
+     */
+    public ChatResponse streamAggregated(Prompt prompt, Consumer<String> reasoningDeltaConsumer,
+                                         Consumer<String> contentDeltaConsumer) {
         OpenAiChatOptions requestOptions = mergeOptions(prompt.getOptions());
         ChatCompletionRequest request = createRequest(prompt.getInstructions(), requestOptions, true);
 
@@ -187,6 +198,9 @@ public class ReasoningChatModel implements ChatModel {
                 }
                 if (StringUtils.hasText(delta.content())) {
                     contentBuilder.append(delta.content());
+                    if (contentDeltaConsumer != null) {
+                        contentDeltaConsumer.accept(delta.content());
+                    }
                 }
                 if (!CollectionUtils.isEmpty(delta.toolCalls())) {
                     mergeToolCallChunks(toolCallsByIndex, delta.toolCalls());
@@ -309,6 +323,12 @@ public class ReasoningChatModel implements ChatModel {
 
         ChatCompletionRequest request = new ChatCompletionRequest(messages, stream);
         request = ModelOptionsUtils.merge(requestOptions, request, ChatCompletionRequest.class);
+
+        // 与官方 OpenAiChatModel 对齐：stream_options 仅允许随 stream=true 发送，
+        // 否则 DeepSeek 等供应商直接 400（stream_options should be set along with stream = true）
+        if (!stream && request.streamOptions() != null) {
+            request = request.streamOptions(null);
+        }
 
         List<ToolDefinition> toolDefinitions = this.toolCallingManager.resolveToolDefinitions(requestOptions);
         if (!CollectionUtils.isEmpty(toolDefinitions)) {

@@ -103,7 +103,7 @@ public class CompareHandler implements IntentHandler {
                 userModelConfigService.getActiveConfig(userId), tokenUsage);
 
         DbCompareAgent agent = new DbCompareAgent(
-                session.agentChatClient(), session.reasoningModel(), dbCompareTool, sqlExecuteTool, terminateTool, preDbDoc, testDbDoc);
+                session.reasoningModel(), dbCompareTool, sqlExecuteTool, terminateTool, preDbDoc, testDbDoc);
         agent.setHistoryMessages(historyMessages);
         agent.setExecutor(chatTaskExecutor);
         agent.setSummaryCallback(markdown ->

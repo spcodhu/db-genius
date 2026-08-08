@@ -86,7 +86,7 @@ public class SqlQueryHandler implements IntentHandler {
         ChatModelSession session = chatModelFactory.createSession(
                 userModelConfigService.getActiveConfig(userId), tokenUsage);
 
-        DbSqlAgent agent = new DbSqlAgent(session.agentChatClient(), session.reasoningModel(), sqlExecuteTool, terminateTool,
+        DbSqlAgent agent = new DbSqlAgent(session.reasoningModel(), sqlExecuteTool, terminateTool,
                 dbDoc, dialectContext);
         agent.setHistoryMessages(historyMessages);
         agent.setExecutor(chatTaskExecutor);

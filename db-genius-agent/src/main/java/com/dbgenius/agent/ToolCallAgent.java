@@ -4,7 +4,6 @@ import com.dbgenius.agent.model.AgentState;
 import com.dbgenius.model.vo.SseEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -58,7 +57,6 @@ public class ToolCallAgent extends ReActAgent {
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     protected final ToolCallback[] availableTools;
-    protected final ChatClient chatClient;
     protected final ReasoningChatModel reasoningChatModel;
     protected final ToolCallingManager toolCallingManager;
     protected final ChatOptions chatOptions;
@@ -67,18 +65,17 @@ public class ToolCallAgent extends ReActAgent {
     private AgentMessageSink messageSink;
 
     public ToolCallAgent(String name, String systemPrompt, String nextStepPrompt,
-                         int maxSteps, ChatClient chatClient, ReasoningChatModel reasoningChatModel,
+                         int maxSteps, ReasoningChatModel reasoningChatModel,
                          Object... toolObjects) {
-        this(name, systemPrompt, nextStepPrompt, maxSteps, chatClient, reasoningChatModel, null, toolObjects);
+        this(name, systemPrompt, nextStepPrompt, maxSteps, reasoningChatModel, null, toolObjects);
     }
 
     public ToolCallAgent(String name, String systemPrompt, String nextStepPrompt,
-                         int maxSteps, ChatClient chatClient, ReasoningChatModel reasoningChatModel,
+                         int maxSteps, ReasoningChatModel reasoningChatModel,
                          Map<String, Object> toolContext, Object... toolObjects) {
         super(name, maxSteps);
         this.systemPrompt = systemPrompt;
         this.nextStepPrompt = nextStepPrompt;
-        this.chatClient = chatClient;
         this.reasoningChatModel = reasoningChatModel;
         this.availableTools = ToolCallbacks.from(toolObjects);
         this.toolCallingManager = ToolCallingManager.builder().build();
@@ -254,9 +251,9 @@ public class ToolCallAgent extends ReActAgent {
 
     @Override
     protected void onFinish(SseEmitter emitter, String userPrompt) throws Exception {
-        // summary 是一次全量上下文的阻塞调用，耗时较长，先推状态避免前端误以为连接已断
+        // summary 是一次全量上下文的调用，耗时较长，先推状态避免前端误以为连接已断
         sendEvent(emitter, SseEvent.of(taskId, currentStep, "thinking", "正在生成总结..."));
-        String markdown = generateMarkdownSummary(userPrompt);
+        String markdown = generateMarkdownSummary(userPrompt, emitter);
         sendEvent(emitter, SseEvent.of(taskId, currentStep, "summary", markdown));
         if (summaryCallback != null) {
             try {
@@ -267,17 +264,21 @@ public class ToolCallAgent extends ReActAgent {
         }
     }
 
-    private String generateMarkdownSummary(String userPrompt) {
+    private String generateMarkdownSummary(String userPrompt, SseEmitter emitter) {
         try {
-            List<Message> summaryMessages = new ArrayList<>(messageList);
+            List<Message> summaryMessages = new ArrayList<>(messageList.size() + 2);
+            summaryMessages.add(new SystemMessage(SUMMARY_SYSTEM_PROMPT));
+            summaryMessages.addAll(messageList);
             summaryMessages.add(new UserMessage(SUMMARY_USER_PROMPT_TEMPLATE.formatted(userPrompt)));
 
-            String markdown = chatClient.prompt()
-                    .messages(summaryMessages)
-                    .system(SUMMARY_SYSTEM_PROMPT)
-                    .call()
-                    .content();
+            // 流式聚合：reasoning/content 增量实时推前端（打字机效果），聚合全文作为
+            // 终态 summary 事件与落库内容；终态事件同时是前端渲染的权威兜底
+            ChatResponse response = reasoningChatModel.streamAggregated(new Prompt(summaryMessages),
+                    reasoningDelta -> sendEvent(emitter, SseEvent.of(taskId, currentStep, "reasoning", reasoningDelta)),
+                    contentDelta -> sendEvent(emitter, SseEvent.of(taskId, currentStep, "summary_delta", contentDelta)));
 
+            String markdown = response != null && response.getResult() != null
+                    ? response.getResult().getOutput().getText() : null;
             if (markdown == null || markdown.isBlank()) {
                 return fallbackSummary(userPrompt);
             }
