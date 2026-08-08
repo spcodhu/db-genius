@@ -2,6 +2,7 @@ package com.dbgenius.agent.intent;
 
 import com.dbgenius.agent.ChatModelFactory;
 import com.dbgenius.agent.ChatModelSession;
+import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Message;
 import com.dbgenius.model.enums.IntentType;
@@ -32,7 +33,8 @@ public class IntentClassifier {
     public IntentClassificationResult classify(String userMessage,
                                                List<Message> recentHistory,
                                                ChatContext context,
-                                               Long userId) {
+                                               Long userId,
+                                               TokenUsageAccumulator tokenUsage) {
         String systemPrompt = buildSystemPrompt(context);
         String historyText = formatHistory(recentHistory);
 
@@ -41,7 +43,7 @@ public class IntentClassifier {
         log.debug("Classifying intent for message: {}", userMessage);
 
         ChatModelSession session = chatModelFactory.createSession(
-                userModelConfigService.getActiveConfig(userId));
+                userModelConfigService.getActiveConfig(userId), tokenUsage);
 
         return session.chatClient().prompt()
                 .system(systemPrompt)

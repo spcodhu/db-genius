@@ -1,11 +1,14 @@
 package com.dbgenius.agent;
 
+import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
+import org.springframework.ai.chat.metadata.DefaultUsage;
+import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
@@ -99,6 +102,9 @@ public class ReasoningChatModel implements ChatModel {
     private final OpenAiChatOptions defaultOptions;
     private final ToolCallingManager toolCallingManager;
 
+    /** 本轮请求的 token 用量累加器，由 ChatModelFactory 注入，可为 null（不记账） */
+    private TokenUsageAccumulator tokenUsageAccumulator;
+
     public ReasoningChatModel(OpenAiApi openAiApi, OpenAiChatModel delegate,
                               OpenAiChatProperties chatProperties, ToolCallingManager toolCallingManager) {
         this.openAiApi = openAiApi;
@@ -107,13 +113,19 @@ public class ReasoningChatModel implements ChatModel {
         this.toolCallingManager = toolCallingManager;
     }
 
+    public void setTokenUsageAccumulator(TokenUsageAccumulator tokenUsageAccumulator) {
+        this.tokenUsageAccumulator = tokenUsageAccumulator;
+    }
+
     @Override
     public ChatResponse call(Prompt prompt) {
         OpenAiChatOptions requestOptions = mergeOptions(prompt.getOptions());
         ChatCompletionRequest request = createRequest(prompt.getInstructions(), requestOptions, false);
         ChatCompletion chatCompletion = this.openAiApi.chatCompletionEntity(request).getBody();
         Assert.notNull(chatCompletion, "chat completion must not be null");
-        return toChatResponse(chatCompletion);
+        ChatResponse response = toChatResponse(chatCompletion);
+        recordUsage(response.getMetadata().getUsage());
+        return response;
     }
 
     @Override
@@ -145,6 +157,7 @@ public class ReasoningChatModel implements ChatModel {
         StringBuilder finishReason = new StringBuilder();
         StringBuilder responseId = new StringBuilder();
         StringBuilder responseModel = new StringBuilder();
+        java.util.concurrent.atomic.AtomicReference<OpenAiApi.Usage> usageRef = new java.util.concurrent.atomic.AtomicReference<>();
 
         this.openAiApi.chatCompletionStream(request).doOnNext(chunk -> {
             if (chunk.id() != null) {
@@ -154,6 +167,10 @@ public class ReasoningChatModel implements ChatModel {
             if (chunk.model() != null) {
                 responseModel.setLength(0);
                 responseModel.append(chunk.model());
+            }
+            if (chunk.usage() != null) {
+                // stream_options.include_usage 开启后，用量可能在独立帧或任意帧携带
+                usageRef.set(chunk.usage());
             }
             List<ChatCompletionChunk.ChunkChoice> choices = chunk.choices();
             if (CollectionUtils.isEmpty(choices)) {
@@ -181,9 +198,11 @@ public class ReasoningChatModel implements ChatModel {
             }
         }).blockLast();
 
-        return toAggregatedChatResponse(responseId.toString(), responseModel.toString(),
+        ChatResponse response = toAggregatedChatResponse(responseId.toString(), responseModel.toString(),
                 finishReason.toString(), contentBuilder.toString(), reasoningBuilder.toString(),
-                toolCallsByIndex);
+                toolCallsByIndex, usageRef.get());
+        recordUsage(response.getMetadata().getUsage());
+        return response;
     }
 
     /**
@@ -223,7 +242,8 @@ public class ReasoningChatModel implements ChatModel {
     /** 与 {@link #toChatResponse} 输出结构对齐，仅数据来源从整块响应换成流式聚合结果。 */
     private ChatResponse toAggregatedChatResponse(String id, String model, String finishReason,
                                                   String content, String reasoning,
-                                                  Map<Integer, ToolCallAccumulator> toolCallsByIndex) {
+                                                  Map<Integer, ToolCallAccumulator> toolCallsByIndex,
+                                                  OpenAiApi.Usage usage) {
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("id", id);
         metadata.put("role", ChatCompletionMessage.Role.ASSISTANT.name());
@@ -245,11 +265,13 @@ public class ReasoningChatModel implements ChatModel {
         ChatGenerationMetadata generationMetadata = ChatGenerationMetadata.builder()
                 .finishReason(finishReason)
                 .build();
-        ChatResponseMetadata responseMetadata = ChatResponseMetadata.builder()
+        ChatResponseMetadata.Builder metadataBuilder = ChatResponseMetadata.builder()
                 .id(id)
-                .model(model)
-                .build();
-        return new ChatResponse(List.of(new Generation(assistantMessage, generationMetadata)), responseMetadata);
+                .model(model);
+        if (usage != null) {
+            metadataBuilder.usage(toSpringUsage(usage));
+        }
+        return new ChatResponse(List.of(new Generation(assistantMessage, generationMetadata)), metadataBuilder.build());
     }
 
     @Override
@@ -371,10 +393,26 @@ public class ReasoningChatModel implements ChatModel {
             return new Generation(assistantMessage, generationMetadata);
         }).toList();
 
-        ChatResponseMetadata responseMetadata = ChatResponseMetadata.builder()
+        ChatResponseMetadata.Builder metadataBuilder = ChatResponseMetadata.builder()
                 .id(chatCompletion.id() != null ? chatCompletion.id() : "")
-                .model(chatCompletion.model() != null ? chatCompletion.model() : "")
-                .build();
-        return new ChatResponse(generations, responseMetadata);
+                .model(chatCompletion.model() != null ? chatCompletion.model() : "");
+        if (chatCompletion.usage() != null) {
+            metadataBuilder.usage(toSpringUsage(chatCompletion.usage()));
+        }
+        return new ChatResponse(generations, metadataBuilder.build());
+    }
+
+    /** OpenAI 协议用量 → Spring AI {@link Usage}，字段缺失按 0 处理。 */
+    private static Usage toSpringUsage(OpenAiApi.Usage usage) {
+        Integer prompt = usage.promptTokens() != null ? usage.promptTokens().intValue() : 0;
+        Integer completion = usage.completionTokens() != null ? usage.completionTokens().intValue() : 0;
+        Integer total = usage.totalTokens() != null ? usage.totalTokens().intValue() : prompt + completion;
+        return new DefaultUsage(prompt, completion, total);
+    }
+
+    private void recordUsage(Usage usage) {
+        if (tokenUsageAccumulator != null && usage != null && usage.getTotalTokens() > 0) {
+            tokenUsageAccumulator.add(usage);
+        }
     }
 }

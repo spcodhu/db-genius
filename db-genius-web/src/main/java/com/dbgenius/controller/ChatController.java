@@ -1,10 +1,14 @@
 package com.dbgenius.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
+import com.dbgenius.agent.compress.CompressOptions;
+import com.dbgenius.agent.compress.ContextCompressService;
 import com.dbgenius.common.result.R;
 import com.dbgenius.intent.IntentRouter;
+import com.dbgenius.model.dto.CompressRequest;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Message;
+import com.dbgenius.model.vo.CompressResultVO;
 import com.dbgenius.model.vo.ConversationVO;
 import com.dbgenius.service.ConversationService;
 import jakarta.validation.Valid;
@@ -25,6 +29,7 @@ public class ChatController {
 
     private final IntentRouter intentRouter;
     private final ConversationService conversationService;
+    private final ContextCompressService contextCompressService;
 
     /**
      * 统一对话入口（SSE 流式输出）
@@ -53,5 +58,16 @@ public class ChatController {
     public R<Void> deleteConversation(@PathVariable Long id) {
         conversationService.deleteConversation(StpUtil.getLoginIdAsLong(), id);
         return R.ok();
+    }
+
+    /**
+     * 主动压缩会话上下文。当前为空实现（Noop），返回 compressed=false 与说明文案。
+     */
+    @PostMapping("/conversations/{id}/compress")
+    public R<CompressResultVO> compressConversation(@PathVariable Long id,
+                                                    @RequestBody(required = false) @Valid CompressRequest request) {
+        Long userId = StpUtil.getLoginIdAsLong();
+        CompressOptions options = CompressOptions.of(request != null ? request.getTargetTokens() : null);
+        return R.ok(contextCompressService.compress(userId, id, options));
     }
 }

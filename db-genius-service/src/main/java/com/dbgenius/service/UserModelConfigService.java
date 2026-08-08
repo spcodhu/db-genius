@@ -3,6 +3,7 @@ package com.dbgenius.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.dbgenius.model.dto.UserModelConfigRequest;
 import com.dbgenius.model.entity.UserModelConfig;
+import com.dbgenius.model.vo.ContextWindowLookupVO;
 import com.dbgenius.model.vo.UserModelConfigVO;
 
 import java.util.List;
@@ -60,4 +61,9 @@ public interface UserModelConfigService extends IService<UserModelConfig> {
      * @throws com.dbgenius.common.exception.BusinessException 当用户无可用配置时抛出
      */
     UserModelConfig getActiveConfig(Long userId);
+
+    /**
+     * 针对已保存配置查询上下文窗口（注册表优先，未命中时远程探测验证模型存在性）。
+     */
+    ContextWindowLookupVO lookupContextWindow(Long userId, Long configId);
 }

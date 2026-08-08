@@ -3,6 +3,7 @@ package com.dbgenius.agent.intent;
 import com.dbgenius.agent.ChatModelFactory;
 import com.dbgenius.agent.ChatModelSession;
 import com.dbgenius.agent.ReasoningChatModel;
+import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.entity.Message;
@@ -10,6 +11,7 @@ import com.dbgenius.model.enums.IntentType;
 import com.dbgenius.model.vo.ConversationVO;
 import com.dbgenius.model.vo.IntentClassificationResult;
 import com.dbgenius.model.vo.SseEvent;
+import com.dbgenius.model.vo.TokenUsageVO;
 import com.dbgenius.service.ConversationService;
 import com.dbgenius.service.UserModelConfigService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -85,7 +87,7 @@ public class SimpleChatHandler implements IntentHandler {
      */
     @Override
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
-                       IntentClassificationResult classification, Long userId) {
+                       IntentClassificationResult classification, Long userId, TokenUsageAccumulator tokenUsage) {
         ConversationVO conversation = getOrCreateConversation(userId, request);
         sendEvent(emitter, SseEvent.of(taskId, 0, "conversation", conversation.getId()));
 
@@ -99,7 +101,7 @@ public class SimpleChatHandler implements IntentHandler {
         StringBuilder fullReasoning = new StringBuilder();
 
         ChatModelSession session = chatModelFactory.createSession(
-                userModelConfigService.getActiveConfig(userId));
+                userModelConfigService.getActiveConfig(userId), tokenUsage);
 
         Disposable disposable = session.chatClient().prompt()
                 .messages(historyMessages)
@@ -108,6 +110,7 @@ public class SimpleChatHandler implements IntentHandler {
                 .chatResponse()
                 .subscribe(
                         chatResponse -> {
+                            // 用量由 UsageTrackingChatModel 装饰器统一记账，此处只处理内容帧
                             if (chatResponse.getResult() == null) {
                                 return;
                             }
@@ -137,6 +140,14 @@ public class SimpleChatHandler implements IntentHandler {
                                             Map.of(ReasoningChatModel.REASONING_CONTENT_KEY,
                                                     fullReasoning.toString())),
                                     null);
+                            // 在 done 之前下发 usage 事件并持久化本轮用量
+                            if (tokenUsage != null && tokenUsage.getCallCount() > 0) {
+                                TokenUsageVO usageVO = tokenUsage.snapshot();
+                                long newTotal = conversationService.updateTokenUsage(
+                                        conversation.getId(), usageVO.getTotalTokens(), usageVO.getContextTokens());
+                                usageVO.setConversationTotalTokens(newTotal);
+                                sendEvent(emitter, SseEvent.of(taskId, -1, "usage", usageVO));
+                            }
                             sendEvent(emitter, SseEvent.done(taskId));
                             emitter.complete();
                         }

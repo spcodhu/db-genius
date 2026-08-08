@@ -10,6 +10,7 @@ import com.dbgenius.agent.tool.ImageReadTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
 import com.dbgenius.agent.tool.file.FileAccessGuard;
+import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.entity.Message;
@@ -71,7 +72,7 @@ public class WorkflowHandler implements IntentHandler {
     @Override
     @TrialDeny("试用版暂不支持工作流操作")
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
-                       IntentClassificationResult classification, Long userId) {
+                       IntentClassificationResult classification, Long userId, TokenUsageAccumulator tokenUsage) {
         List<Long> dbConfigIds = request.getDbConfigIds();
 
         // 先建会话并下发 conversation 事件、落库本轮用户消息，保证即使后续前置校验失败，
@@ -112,7 +113,7 @@ public class WorkflowHandler implements IntentHandler {
         }
 
         ChatModelSession session = chatModelFactory.createSession(
-                userModelConfigService.getActiveConfig(userId));
+                userModelConfigService.getActiveConfig(userId), tokenUsage);
 
         DbWorkflowAgent agent = new DbWorkflowAgent(
                 session.agentChatClient(), session.reasoningModel(), sqlExecuteTool, fileReadTool, imageReadTool, terminateTool,
@@ -121,6 +122,12 @@ public class WorkflowHandler implements IntentHandler {
         agent.setExecutor(chatTaskExecutor);
         agent.setSummaryCallback(markdown ->
                 conversationService.saveMessage(conversation.getId(), "assistant", markdown, -1, "summary"));
+        agent.setTokenUsageAccumulator(tokenUsage);
+        agent.setUsageCallback(usageVO -> {
+            long newTotal = conversationService.updateTokenUsage(
+                    conversation.getId(), usageVO.getTotalTokens(), usageVO.getContextTokens());
+            usageVO.setConversationTotalTokens(newTotal);
+        });
         agent.setMessageSink(new ToolCallAgent.AgentMessageSink() {
             @Override
             public void onAssistant(int step, String content, String reasoningContent, String toolCallsJson) {

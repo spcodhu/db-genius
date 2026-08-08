@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS conversation (
     title VARCHAR(256),
     type VARCHAR(32) NOT NULL,
     db_config_ids TEXT,
+    total_tokens BIGINT NOT NULL DEFAULT 0,
+    context_tokens INT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -103,8 +105,14 @@ CREATE TABLE IF NOT EXISTS user_model_config (
     base_url VARCHAR(256) NOT NULL,
     api_key_encrypted TEXT NOT NULL,
     model_name VARCHAR(128) NOT NULL,
+    context_window INT,
     is_default BOOLEAN NOT NULL DEFAULT FALSE,
     status SMALLINT NOT NULL DEFAULT 1,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- 存量库升级（幂等，可重复执行）：会话 token 统计列与模型配置上下文窗口列
+ALTER TABLE conversation ADD COLUMN IF NOT EXISTS total_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE conversation ADD COLUMN IF NOT EXISTS context_tokens INT;
+ALTER TABLE user_model_config ADD COLUMN IF NOT EXISTS context_window INT;

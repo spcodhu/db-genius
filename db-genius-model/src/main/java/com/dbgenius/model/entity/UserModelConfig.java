@@ -38,6 +38,9 @@ public class UserModelConfig {
     /** 模型名称，如 "deepseek-v4-pro"、"gpt-4o" */
     private String modelName;
 
+    /** 模型最大上下文窗口（token 数），null 表示未知 */
+    private Integer contextWindow;
+
     /** 是否为该用户的默认配置（每个用户仅一条为 1） */
     private Boolean isDefault;
 

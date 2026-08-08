@@ -4,7 +4,14 @@
       "Bash(git:*)",
       "Bash(cd /Users/spcodhu/Code/backend/java/db-genius && ./mvnw clean package -DskipTests > /tmp/dbgenius-build.log 2>&1; echo \"MVN_EXIT=$?\")",
       "Bash(cd /Users/spcodhu/Code/backend/java/db-genius && set -a && source .env && set +a && java -jar db-genius-web/target/db-genius-web-1.0.0.jar > /tmp/dbgenius-run.log 2>&1 & echo \"PID=$!\")",
-      "Bash(grep \"SPRING_DATASOURCE_URL\" /Users/spcodhu/Code/backend/java/db-genius/.env; kill 27243 2>/dev/null; cd /Users/spcodhu/Code/backend/java/db-genius && set -a && source .env && set +a && export SPRING_DATASOURCE_URL=\"${SPRING_DATASOURCE_URL}?currentSchema=app\" && java -jar db-genius-web/target/db-genius-web-1.0.0.jar > /tmp/dbgenius-run2.log 2>&1 & echo \"PID=$!\")"
+      "Bash(grep \"SPRING_DATASOURCE_URL\" /Users/spcodhu/Code/backend/java/db-genius/.env; kill 27243 2>/dev/null; cd /Users/spcodhu/Code/backend/java/db-genius && set -a && source .env && set +a && export SPRING_DATASOURCE_URL=\"${SPRING_DATASOURCE_URL}?currentSchema=app\" && java -jar db-genius-web/target/db-genius-web-1.0.0.jar > /tmp/dbgenius-run2.log 2>&1 & echo \"PID=$!\")",
+      "Bash(git remote -v && git --no-pager branch -a && git --no-pager tag | head -20 && git --no-pager log --oneline -5)",
+      "Bash(git --no-pager status -sb && git rev-list --count origin/master..master; git rev-list --count origin/trial..trial 2>/dev/null; echo \"---largest objects---\"; git rev-list --objects --all | git cat-file --batch-check='%\\(objecttype\\) %\\(objectsize\\) %\\(rest\\)' 2>/dev/null | awk '$1==\"blob\" && $2>1048576 {print $2, $3}' | sort -rn | head -10; echo \"---lfs---\"; ls .gitattributes 2>/dev/null && cat .gitattributes; git lfs ls-files 2>/dev/null | head)",
+      "Bash(gh auth status 2>&1 | head -10)",
+      "Bash(ssh -T git@github.com -o BatchMode=yes -o ConnectTimeout=8 2>&1 | head -3; ls ~/.ssh/ 2>/dev/null | head)",
+      "Bash(cat ~/.ssh/config 2>/dev/null; git config --get credential.helper; git config --get-all credential.https://github.com.helper 2>/dev/null; echo \"exit ok\")",
+      "Read(//Users/spcodhu/.ssh/**)",
+      "Bash(git remote -v && git --no-pager status -sb && git ls-remote origin && git --no-pager log --oneline | wc -l)"
     ]
   }
 }

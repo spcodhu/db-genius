@@ -82,6 +82,11 @@ db-genius:
     builtin-port: ${DB_GENIUS_TRIAL_BUILTIN_PORT:3306}
     builtin-username: ${DB_GENIUS_TRIAL_BUILTIN_USERNAME:}
     builtin-password: ${DB_GENIUS_TRIAL_BUILTIN_PASSWORD:}
+  context:
+    # 自动压缩上下文（当前压缩为空实现，默认关闭）
+    auto-compress:
+      enabled: ${DB_GENIUS_AUTO_COMPRESS_ENABLED:false}
+      threshold: ${DB_GENIUS_AUTO_COMPRESS_THRESHOLD:0.8}
 
 logging:
   level:

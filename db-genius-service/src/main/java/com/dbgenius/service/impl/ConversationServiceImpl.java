@@ -1,6 +1,7 @@
 package com.dbgenius.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dbgenius.common.exception.BusinessException;
 import com.dbgenius.mapper.ConversationMapper;
@@ -77,6 +78,17 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
     }
 
     @Override
+    public long updateTokenUsage(Long conversationId, long roundTotalTokens, int contextTokens) {
+        update(new LambdaUpdateWrapper<Conversation>()
+                .eq(Conversation::getId, conversationId)
+                .setSql("total_tokens = total_tokens + " + roundTotalTokens)
+                .set(Conversation::getContextTokens, contextTokens));
+        Conversation conversation = getById(conversationId);
+        return conversation != null && conversation.getTotalTokens() != null
+                ? conversation.getTotalTokens() : 0L;
+    }
+
+    @Override
     public List<Message> getRecentMessages(Long conversationId, int limit) {
         List<Message> messages = messageMapper.selectList(new LambdaQueryWrapper<Message>()
                 .eq(Message::getConversationId, conversationId)
@@ -94,6 +106,8 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
         vo.setTitle(conversation.getTitle());
         vo.setType(conversation.getType());
         vo.setDbConfigIds(conversation.getDbConfigIds());
+        vo.setTotalTokens(conversation.getTotalTokens());
+        vo.setContextTokens(conversation.getContextTokens());
         vo.setCreatedAt(conversation.getCreatedAt());
         return vo;
     }

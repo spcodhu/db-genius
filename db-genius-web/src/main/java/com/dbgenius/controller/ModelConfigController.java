@@ -2,11 +2,14 @@ package com.dbgenius.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.dbgenius.common.result.R;
+import com.dbgenius.model.dto.ContextWindowLookupRequest;
 import com.dbgenius.model.dto.UserModelConfigRequest;
+import com.dbgenius.model.vo.ContextWindowLookupVO;
 import com.dbgenius.model.vo.ModelProviderVO;
 import com.dbgenius.model.vo.UserModelConfigVO;
 import com.dbgenius.service.ModelProviderService;
 import com.dbgenius.service.UserModelConfigService;
+import com.dbgenius.service.modelinfo.ModelInfoService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +28,24 @@ public class ModelConfigController {
 
     private final ModelProviderService modelProviderService;
     private final UserModelConfigService userModelConfigService;
+    private final ModelInfoService modelInfoService;
+
+    /**
+     * 远程查询模型上下文窗口（保存前的表单场景，apiKey 走 body 不入日志）。
+     */
+    @PostMapping("/context-window/lookup")
+    public R<ContextWindowLookupVO> lookupContextWindow(@Valid @RequestBody ContextWindowLookupRequest request) {
+        return R.ok(modelInfoService.lookup(request.getBaseUrl(), request.getApiKey(), request.getModelName()));
+    }
+
+    /**
+     * 针对已保存配置查询上下文窗口（编辑场景，apiKey 留空时用此接口）。
+     */
+    @GetMapping("/configs/{id}/context-window")
+    public R<ContextWindowLookupVO> lookupSavedConfigContextWindow(@PathVariable Long id) {
+        Long userId = StpUtil.getLoginIdAsLong();
+        return R.ok(userModelConfigService.lookupContextWindow(userId, id));
+    }
 
     /**
      * 获取所有可用的 provider 预设（内置 + 管理员扩展）。
@@ -99,6 +120,7 @@ public class ModelConfigController {
             vo.setDisplayName(config.getDisplayName());
             vo.setBaseUrl(config.getBaseUrl());
             vo.setModelName(config.getModelName());
+            vo.setContextWindow(config.getContextWindow());
             vo.setIsDefault(true);
             vo.setStatus(1);
             vo.setStatusDesc("已启用");

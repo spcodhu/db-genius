@@ -1,7 +1,9 @@
 package com.dbgenius.agent;
 
 import com.dbgenius.agent.model.AgentState;
+import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.model.vo.SseEvent;
+import com.dbgenius.model.vo.TokenUsageVO;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +32,10 @@ public abstract class BaseAgent {
     protected List<org.springframework.ai.chat.messages.Message> messageList;
     protected String taskId;
     protected Consumer<String> summaryCallback;
+    /** 本轮请求的 token 用量累加器，runStream 结束前下发 usage 事件；可为 null（不统计） */
+    protected TokenUsageAccumulator tokenUsageAccumulator;
+    /** 用量快照回调：发射 usage 事件前调用，供调用方持久化并回填会话累计值 */
+    protected Consumer<TokenUsageVO> usageCallback;
     /** 历史对话消息，由调用方在 runStream 前注入，随本轮消息一起发给模型。 */
     protected List<org.springframework.ai.chat.messages.Message> historyMessages = new ArrayList<>();
     /** 当前运行的 SSE 发射器，供 step 循环内部（如 think()）推送事件。 */
@@ -41,6 +47,14 @@ public abstract class BaseAgent {
 
     public void setSummaryCallback(Consumer<String> summaryCallback) {
         this.summaryCallback = summaryCallback;
+    }
+
+    public void setTokenUsageAccumulator(TokenUsageAccumulator tokenUsageAccumulator) {
+        this.tokenUsageAccumulator = tokenUsageAccumulator;
+    }
+
+    public void setUsageCallback(Consumer<TokenUsageVO> usageCallback) {
+        this.usageCallback = usageCallback;
     }
 
     public void setExecutor(Executor executor) {
@@ -124,6 +138,7 @@ public abstract class BaseAgent {
 
                 onFinish(emitter, userPrompt);
 
+                sendUsageEvent(emitter, taskId);
                 sendEvent(emitter, SseEvent.done(taskId));
                 emitter.complete();
             } catch (Exception e) {
@@ -141,6 +156,25 @@ public abstract class BaseAgent {
     }
 
     protected abstract String step() throws Exception;
+
+    /**
+     * 在 done 之前下发 usage 事件：先经 usageCallback 持久化（回填会话累计值），再推送快照。
+     * 覆盖分类 + 多步 think + summary 的全部 LLM 调用（均由累加器自动记账）。
+     */
+    private void sendUsageEvent(SseEmitter emitter, String taskId) {
+        if (tokenUsageAccumulator == null || tokenUsageAccumulator.getCallCount() == 0) {
+            return;
+        }
+        TokenUsageVO usageVO = tokenUsageAccumulator.snapshot();
+        if (usageCallback != null) {
+            try {
+                usageCallback.accept(usageVO);
+            } catch (Exception e) {
+                log.warn("[{}] Failed to persist token usage", name, e);
+            }
+        }
+        sendEvent(emitter, SseEvent.of(taskId, -1, "usage", usageVO));
+    }
 
     protected void onStepStart(SseEmitter emitter, String userPrompt) throws Exception {
     }

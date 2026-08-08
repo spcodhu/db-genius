@@ -1,8 +1,10 @@
 package com.dbgenius.intent;
 
+import com.dbgenius.agent.compress.AutoCompressService;
 import com.dbgenius.agent.intent.ChatContext;
 import com.dbgenius.agent.intent.IntentClassifier;
 import com.dbgenius.agent.intent.IntentHandler;
+import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Message;
 import com.dbgenius.model.enums.IntentType;
@@ -36,6 +38,7 @@ public class IntentRouter {
     private final IntentHandlerRegistry registry;
     private final ConversationService conversationService;
     private final Executor chatTaskExecutor;
+    private final AutoCompressService autoCompressService;
 
     private static final int HISTORY_CONTEXT_SIZE = 5;
     private static final double CONFIDENCE_THRESHOLD = IntentClassifier.CONFIDENCE_THRESHOLD;
@@ -45,6 +48,8 @@ public class IntentRouter {
     public SseEmitter route(UnifiedChatRequest request, Long userId) {
         String taskId = UUID.randomUUID().toString();
         SseEmitter emitter = new SseEmitter(300_000L);
+        // 本轮请求的 token 用量累加器：分类与各 Handler 的 LLM 调用统一记账
+        TokenUsageAccumulator tokenUsage = new TokenUsageAccumulator();
 
         CompletableFuture.runAsync(() -> {
             try {
@@ -54,7 +59,7 @@ public class IntentRouter {
                             request.getConfirmedIntent(), 1.0, "User confirmed intent", false);
                     sendEvent(emitter, SseEvent.of(taskId, 0, "routing",
                             "正在启动" + confirmed.intent().getDescription() + "..."));
-                    dispatchToHandler(emitter, taskId, request, confirmed, userId);
+                    dispatchToHandler(emitter, taskId, request, confirmed, userId, tokenUsage);
                     return;
                 }
 
@@ -64,12 +69,15 @@ public class IntentRouter {
                 // 3. 加载历史上下文
                 List<Message> history = loadRecentHistory(request.getConversationId());
 
+                // 3.1 自动压缩钩子（默认关闭；本轮压缩为 Noop 空实现）
+                autoCompressService.compressIfNeeded(request.getConversationId(), userId);
+
                 // 4. 构建分类上下文
                 ChatContext context = buildChatContext(request);
 
                 // 5. LLM 分类
                 IntentClassificationResult result = classifier.classify(
-                        request.getMessage(), history, context, userId);
+                        request.getMessage(), history, context, userId, tokenUsage);
 
                 log.info("[IntentRouter] classified intent={}, confidence={}, needsClarification={}",
                         result.intent(), result.confidence(), result.needsClarification());
@@ -80,16 +88,19 @@ public class IntentRouter {
                 // 7. 判断是否需要确认
                 if (result.needsClarification() || result.confidence() < CONFIDENCE_THRESHOLD) {
                     sendClarificationEvent(emitter, taskId, result, request);
+                    // 澄清分支不进入 Handler，分类消耗的 token 也需告知前端
+                    sendUsageEvent(emitter, taskId, tokenUsage);
                     return;
                 }
 
                 // 8. 路由到 Handler
                 sendEvent(emitter, SseEvent.of(taskId, 0, "routing",
                         "正在启动" + result.intent().getDescription() + "..."));
-                dispatchToHandler(emitter, taskId, request, result, userId);
+                dispatchToHandler(emitter, taskId, request, result, userId, tokenUsage);
 
             } catch (Exception e) {
                 log.error("[IntentRouter] Route error", e);
+                sendUsageEvent(emitter, taskId, tokenUsage);
                 sendEvent(emitter, SseEvent.error(taskId, e.getMessage()));
                 emitter.complete();
             }
@@ -99,15 +110,25 @@ public class IntentRouter {
     }
 
     private void dispatchToHandler(SseEmitter emitter, String taskId, UnifiedChatRequest request,
-                                   IntentClassificationResult classification, Long userId) {
+                                   IntentClassificationResult classification, Long userId,
+                                   TokenUsageAccumulator tokenUsage) {
         IntentHandler handler = registry.getHandler(classification.intent());
         try {
-            handler.handle(emitter, taskId, request, classification, userId);
+            handler.handle(emitter, taskId, request, classification, userId, tokenUsage);
         } catch (Exception e) {
             log.error("[IntentRouter] Handler error", e);
+            sendUsageEvent(emitter, taskId, tokenUsage);
             sendEvent(emitter, SseEvent.error(taskId, e.getMessage()));
             emitter.complete();
         }
+    }
+
+    /** 尽力而为地下发已记账的用量（无调用则不发） */
+    private void sendUsageEvent(SseEmitter emitter, String taskId, TokenUsageAccumulator tokenUsage) {
+        if (tokenUsage == null || tokenUsage.getCallCount() == 0) {
+            return;
+        }
+        sendEvent(emitter, SseEvent.of(taskId, -1, "usage", tokenUsage.snapshot()));
     }
 
     private void sendClarificationEvent(SseEmitter emitter, String taskId,

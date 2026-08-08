@@ -8,6 +8,7 @@ import com.dbgenius.agent.ToolCallAgent;
 import com.dbgenius.agent.tool.DbCompareTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
+import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.entity.DbConfig;
@@ -64,7 +65,7 @@ public class CompareHandler implements IntentHandler {
     @Override
     @TrialDeny("试用版暂不支持数据库对比")
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
-                       IntentClassificationResult classification, Long userId) {
+                       IntentClassificationResult classification, Long userId, TokenUsageAccumulator tokenUsage) {
         Long preDbConfigId = request.getPreDbConfigId();
         Long testDbConfigId = request.getTestDbConfigId();
 
@@ -99,7 +100,7 @@ public class CompareHandler implements IntentHandler {
                 ? testConfig.getDocContent() : "Documentation not available";
 
         ChatModelSession session = chatModelFactory.createSession(
-                userModelConfigService.getActiveConfig(userId));
+                userModelConfigService.getActiveConfig(userId), tokenUsage);
 
         DbCompareAgent agent = new DbCompareAgent(
                 session.agentChatClient(), session.reasoningModel(), dbCompareTool, sqlExecuteTool, terminateTool, preDbDoc, testDbDoc);
@@ -107,6 +108,12 @@ public class CompareHandler implements IntentHandler {
         agent.setExecutor(chatTaskExecutor);
         agent.setSummaryCallback(markdown ->
                 conversationService.saveMessage(conversation.getId(), "assistant", markdown, -1, "summary"));
+        agent.setTokenUsageAccumulator(tokenUsage);
+        agent.setUsageCallback(usageVO -> {
+            long newTotal = conversationService.updateTokenUsage(
+                    conversation.getId(), usageVO.getTotalTokens(), usageVO.getContextTokens());
+            usageVO.setConversationTotalTokens(newTotal);
+        });
         agent.setMessageSink(new ToolCallAgent.AgentMessageSink() {
             @Override
             public void onAssistant(int step, String content, String reasoningContent, String toolCallsJson) {

@@ -20,6 +20,12 @@ public class Conversation {
 
     private String dbConfigIds;
 
+    /** 会话累计消耗 token（每轮请求累加） */
+    private Long totalTokens;
+
+    /** 当前上下文占用 token（最近一次 LLM 调用的 prompt_tokens） */
+    private Integer contextTokens;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

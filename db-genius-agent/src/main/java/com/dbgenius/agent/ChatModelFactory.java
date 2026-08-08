@@ -1,8 +1,11 @@
 package com.dbgenius.agent;
 
+import com.dbgenius.agent.usage.TokenUsageAccumulator;
+import com.dbgenius.agent.usage.UsageTrackingChatModel;
 import com.dbgenius.common.util.AesUtil;
 import com.dbgenius.model.entity.UserModelConfig;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.model.openai.autoconfigure.OpenAiChatProperties;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.openai.OpenAiChatModel;
@@ -49,6 +52,16 @@ public class ChatModelFactory {
      * @return ChatModelSession，包含 chatClient + agentChatClient + 底层模型引用
      */
     public ChatModelSession createSession(UserModelConfig config) {
+        return createSession(config, null);
+    }
+
+    /**
+     * 带 token 用量累加器的重载：两条 LLM 调用路径（官方模型 + ReasoningChatModel）
+     * 的每次调用都会记账到累加器，并把配置的上下文窗口注入累加器供占用计算。
+     *
+     * @param accumulator 本轮请求的用量累加器，null 表示不统计
+     */
+    public ChatModelSession createSession(UserModelConfig config, TokenUsageAccumulator accumulator) {
         String apiKey = resolveApiKey(config);
         String baseUrl = config.getBaseUrl();
         String modelName = config.getModelName();
@@ -60,8 +73,10 @@ public class ChatModelFactory {
                 .webClientBuilder(webClientBuilder)
                 .build();
 
+        // streamUsage：请求携带 stream_options.include_usage，流式末尾帧返回用量
         OpenAiChatOptions defaultOptions = OpenAiChatOptions.builder()
                 .model(modelName)
+                .streamUsage(true)
                 .build();
 
         OpenAiChatModel chatModel = OpenAiChatModel.builder()
@@ -73,14 +88,22 @@ public class ChatModelFactory {
         // 构造 ReasoningChatModel 需要的 OpenAiChatProperties（仅传必要的默认 options）
         OpenAiChatProperties chatProperties = new OpenAiChatProperties();
         chatProperties.getOptions().setModel(modelName);
+        chatProperties.getOptions().setStreamUsage(true);
 
         ReasoningChatModel reasoningModel = new ReasoningChatModel(
                 openAiApi, chatModel, chatProperties, toolCallingManager);
 
-        ChatClient chatClient = ChatClient.builder(chatModel).build();
+        ChatModel effectiveChatModel = chatModel;
+        if (accumulator != null) {
+            reasoningModel.setTokenUsageAccumulator(accumulator);
+            accumulator.setContextWindow(config.getContextWindow());
+            effectiveChatModel = new UsageTrackingChatModel(chatModel, accumulator);
+        }
+
+        ChatClient chatClient = ChatClient.builder(effectiveChatModel).build();
         ChatClient agentChatClient = ChatClient.builder(reasoningModel).build();
 
-        return new ChatModelSession(chatModel, reasoningModel, chatClient, agentChatClient);
+        return new ChatModelSession(effectiveChatModel, reasoningModel, chatClient, agentChatClient);
     }
 
     private String resolveApiKey(UserModelConfig config) {

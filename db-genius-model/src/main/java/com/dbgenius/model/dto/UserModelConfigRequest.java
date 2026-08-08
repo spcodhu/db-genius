@@ -35,4 +35,8 @@ public class UserModelConfigRequest {
     @NotBlank(message = "modelName is required")
     @Size(max = 128)
     private String modelName;
+
+    /** 模型最大上下文窗口（token 数），可选；留空则后端按已知模型注册表兜底 */
+    @jakarta.validation.constraints.Positive(message = "contextWindow must be positive")
+    private Integer contextWindow;
 }

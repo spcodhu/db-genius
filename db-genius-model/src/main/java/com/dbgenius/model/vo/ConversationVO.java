@@ -11,5 +11,7 @@ public class ConversationVO {
     private String title;
     private String type;
     private String dbConfigIds;
+    private Long totalTokens;
+    private Integer contextTokens;
     private LocalDateTime createdAt;
 }

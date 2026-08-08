@@ -11,9 +11,12 @@ import com.dbgenius.model.entity.ModelProvider;
 import com.dbgenius.model.entity.UserModelConfig;
 import com.dbgenius.model.enums.ModelConfigStatus;
 import com.dbgenius.model.enums.ModelProviderType;
+import com.dbgenius.model.vo.ContextWindowLookupVO;
 import com.dbgenius.model.vo.UserModelConfigVO;
 import com.dbgenius.service.ModelProviderService;
 import com.dbgenius.service.UserModelConfigService;
+import com.dbgenius.service.modelinfo.KnownModelRegistry;
+import com.dbgenius.service.modelinfo.ModelInfoService;
 import com.dbgenius.trial.TrialDeny;
 import com.dbgenius.trial.TrialGuard;
 import lombok.extern.slf4j.Slf4j;
@@ -50,6 +53,12 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
     @Autowired
     private ModelProviderService modelProviderService;
 
+    @Autowired
+    private KnownModelRegistry knownModelRegistry;
+
+    @Autowired
+    private ModelInfoService modelInfoService;
+
     @Override
     @Transactional
     @TrialDeny("试用版暂不支持新增模型配置")
@@ -69,6 +78,7 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
 
         config.setApiKeyEncrypted(AesUtil.encrypt(request.getApiKey(), encryptKey));
         config.setModelName(request.getModelName());
+        config.setContextWindow(resolveContextWindow(request.getContextWindow(), request.getModelName(), null));
 
         // 如果是用户第一条配置，自动设为默认
         long count = countByUserId(userId);
@@ -98,6 +108,8 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
             config.setApiKeyEncrypted(AesUtil.encrypt(request.getApiKey(), encryptKey));
         }
         config.setModelName(request.getModelName());
+        config.setContextWindow(resolveContextWindow(request.getContextWindow(), request.getModelName(),
+                config.getContextWindow()));
         updateById(config);
         log.info("User {} updated model config id={}", userId, configId);
         return toVO(config);
@@ -180,6 +192,27 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
         return config;
     }
 
+    @Override
+    @TrialDeny("试用版暂不支持远程获取上下文窗口")
+    public ContextWindowLookupVO lookupContextWindow(Long userId, Long configId) {
+        UserModelConfig config = getOwnedConfig(userId, configId);
+        // fallback/明文场景与 ChatModelFactory.resolveApiKey 保持一致
+        String apiKey = "system".equals(config.getProviderCode())
+                ? config.getApiKeyEncrypted()
+                : AesUtil.decrypt(config.getApiKeyEncrypted(), encryptKey);
+        return modelInfoService.lookup(config.getBaseUrl(), apiKey, config.getModelName());
+    }
+
+    /**
+     * 上下文窗口取值优先级：用户显式填写 → 已知模型注册表兜底 → 沿用旧值（编辑场景）。
+     */
+    private Integer resolveContextWindow(Integer requested, String modelName, Integer existing) {
+        if (requested != null) {
+            return requested;
+        }
+        return knownModelRegistry.lookup(modelName).orElse(existing);
+    }
+
     // ---- private helpers ----
 
     private UserModelConfig getOwnedConfig(Long userId, Long configId) {
@@ -221,6 +254,7 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
         config.setBaseUrl(defaultBaseUrl);
         config.setApiKeyEncrypted(defaultApiKey); // fallback key 不加密，明文就存在这里（仅内部调用 decryptFallback 区别对待）
         config.setModelName(defaultModel);
+        config.setContextWindow(knownModelRegistry.lookup(defaultModel).orElse(null));
         config.setIsDefault(true);
         config.setStatus(ModelConfigStatus.ENABLED);
         return config;
@@ -234,6 +268,7 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
         vo.setDisplayName(entity.getDisplayName());
         vo.setBaseUrl(entity.getBaseUrl());
         vo.setModelName(entity.getModelName());
+        vo.setContextWindow(entity.getContextWindow());
         vo.setIsDefault(entity.getIsDefault());
         vo.setStatus(entity.getStatus().getCode());
         vo.setStatusDesc(entity.getStatus().getDesc());

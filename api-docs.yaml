@@ -298,6 +298,7 @@ paths:
         | `content` | 简单会话的流式文本片段 | 字符串 |
         | `summary` | 最终 Markdown 总结 | Markdown 字符串 |
         | `error` | 执行出错 | 字符串，错误信息 |
+        | `usage` | 本轮 token 用量统计（done 之前发出） | JSON 对象（TokenUsageVO）：`{"promptTokens": 1200, "completionTokens": 340, "totalTokens": 1540, "contextTokens": 1180, "callCount": 4, "conversationTotalTokens": 6120, "contextWindow": 65536}` |
         | `done` | 流结束信号 | null |
 
         **意图类型：**
@@ -412,6 +413,21 @@ paths:
                       | 2 | Bob | 25 |
                       | 3 | Carol | 22 |
                     timestamp: 1719648005000
+                usage:
+                  summary: 本轮 token 用量
+                  value:
+                    taskId: "uuid"
+                    step: -1
+                    type: "usage"
+                    content:
+                      promptTokens: 1200
+                      completionTokens: 340
+                      totalTokens: 1540
+                      contextTokens: 1180
+                      callCount: 4
+                      conversationTotalTokens: 6120
+                      contextWindow: 65536
+                    timestamp: 1719648005500
                 done:
                   summary: 流结束
                   value:
@@ -483,6 +499,53 @@ paths:
           $ref: '#/components/responses/Ok'
         '401':
           $ref: '#/components/responses/Unauthorized'
+
+  /chat/conversations/{id}/compress:
+    post:
+      tags: [对话管理]
+      summary: 压缩对话上下文
+      description: |
+        主动压缩指定对话的上下文（将历史消息摘要化以降低 token 占用）。
+
+        当前为骨架实现（noop 策略）：返回 `compressed=false`，`message` 提示功能即将上线。
+        未来将支持 LLM 摘要压缩策略，并自动在占用达阈值时触发
+        （`db-genius.context.auto-compress.enabled/threshold`，默认关闭）。
+
+        错误码：
+        - `404`：对话不存在或不属于当前用户
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompressRequest'
+      responses:
+        '200':
+          description: 压缩结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_CompressResultVO'
+              example:
+                code: 200
+                message: success
+                data:
+                  conversationId: 1
+                  compressed: false
+                  beforeTokens: 6120
+                  afterTokens: 6120
+                  summaryMessageId: null
+                  message: "上下文压缩功能即将上线，敬请期待"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 对话不存在或不属于当前用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_Void'
 
   # ---- 文件上传 ----
   /file/upload:
@@ -659,6 +722,66 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/R_UserModelConfigVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /model-config/context-window/lookup:
+    post:
+      tags: [模型配置]
+      summary: 远程识别模型的最大上下文窗口
+      description: |
+        根据 `baseUrl + apiKey + modelName` 识别模型的最大上下文窗口（tokens）。
+
+        解析顺序：
+        1. 命中内置已知模型注册表（deepseek / gpt-4o / qwen / glm / kimi 等常见模型）→ `source="registry"`，返回已知窗口；
+        2. 未命中则请求 `{baseUrl}/v1/models`（Bearer 鉴权，5s 超时）探测模型是否存在，仅验证存在性 → `source="not_found"`，`contextWindow=null`；
+        3. 探测失败不报错，同样返回 `not_found`，由用户手填。
+
+        API Key 走请求体传输，不落日志。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContextWindowLookupRequest'
+      responses:
+        '200':
+          description: 识别结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_ContextWindowLookupVO'
+              example:
+                code: 200
+                message: success
+                data:
+                  modelName: deepseek-chat
+                  contextWindow: 65536
+                  source: registry
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /model-config/configs/{id}/context-window:
+    get:
+      tags: [模型配置]
+      summary: 远程识别已保存配置的上下文窗口
+      description: |
+        与 POST /model-config/context-window/lookup 相同逻辑，但针对已保存的模型配置：
+        后端解密该配置的 API Key 后探测，前端无需回传密钥。
+
+        错误码：
+        - `404`：配置不存在或不属于当前用户
+
+        **试用版限制：** 试用版下返回 `403`。
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: 识别结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/R_ContextWindowLookupVO'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -1043,6 +1166,14 @@ components:
           description: 模型名，如 deepseek-v4-pro、gpt-4o
           example: deepseek-v4-pro
           maxLength: 128
+        contextWindow:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: |
+            模型最大上下文窗口（tokens）。留空时后端按内置已知模型注册表自动识别，
+            未识别到则保持为空，前端上下文占用条只显示绝对值。
+          example: 65536
 
     UnifiedChatRequest:
       type: object
@@ -1166,6 +1297,16 @@ components:
         dbConfigIds:
           type: string
           description: 关联的数据库配置 ID（逗号分隔）
+        totalTokens:
+          type: integer
+          format: int64
+          description: 对话累计消耗的 token 总数
+          example: 6120
+        contextTokens:
+          type: integer
+          nullable: true
+          description: 当前上下文占用（最近一次 LLM 调用的 prompt tokens）
+          example: 1180
         createdAt:
           type: string
           format: date-time
@@ -1290,6 +1431,11 @@ components:
         modelName:
           type: string
           example: deepseek-v4-pro
+        contextWindow:
+          type: integer
+          nullable: true
+          description: 模型最大上下文窗口（tokens），未识别到时为 null
+          example: 65536
         isDefault:
           type: boolean
           description: 是否为默认配置
@@ -1343,7 +1489,7 @@ components:
           type: string
           description: 事件类型
           enum: [thinking, reasoning, step, summary, error, done,
-                 classifying, classified, clarify, routing, content]
+                 classifying, classified, clarify, routing, content, usage]
         content:
           description: |
             事件内容，根据 type 不同有不同含义：
@@ -1357,8 +1503,147 @@ components:
             - content: 简单会话的流式文本片段
             - summary: 最终 Markdown 总结；查询结果以表格展示，其他任务按结构化 Markdown 展示
             - error: 错误详情
+            - usage: {"promptTokens": 1200, "completionTokens": 340, "totalTokens": 1540, "contextTokens": 1180, "callCount": 4, "conversationTotalTokens": 6120, "contextWindow": 65536}（done 之前发出）
             - done: null
         timestamp:
           type: integer
           format: int64
           description: 毫秒级时间戳
+
+    # ---- Token 用量与上下文窗口 ----
+    TokenUsageVO:
+      type: object
+      description: 单轮会话的 token 用量统计（SSE usage 事件的 content）
+      properties:
+        promptTokens:
+          type: integer
+          format: int64
+          description: 本轮累计提示 token
+          example: 1200
+        completionTokens:
+          type: integer
+          format: int64
+          description: 本轮累计输出 token
+          example: 340
+        totalTokens:
+          type: integer
+          format: int64
+          description: 本轮合计消耗 token
+          example: 1540
+        contextTokens:
+          type: integer
+          description: 当前上下文占用（本轮最后一次 LLM 调用的 prompt tokens）
+          example: 1180
+        callCount:
+          type: integer
+          description: 本轮模型调用次数（含意图分类）
+          example: 4
+        conversationTotalTokens:
+          type: integer
+          format: int64
+          nullable: true
+          description: 对话累计消耗 token（含本轮，已持久化）
+          example: 6120
+        contextWindow:
+          type: integer
+          nullable: true
+          description: 模型最大上下文窗口（tokens），未配置时为 null
+          example: 65536
+
+    ContextWindowLookupRequest:
+      type: object
+      required: [baseUrl, apiKey, modelName]
+      properties:
+        baseUrl:
+          type: string
+          description: API 地址（是否已含 /v1 均可）
+          example: https://api.deepseek.com
+        apiKey:
+          type: string
+          description: 明文 API Key，仅用于本次探测，不落库不打日志
+          example: sk-xxxx
+        modelName:
+          type: string
+          description: 模型名
+          example: deepseek-chat
+
+    ContextWindowLookupVO:
+      type: object
+      properties:
+        modelName:
+          type: string
+          example: deepseek-chat
+        contextWindow:
+          type: integer
+          nullable: true
+          description: 识别到的最大上下文窗口；source 为 not_found 时为 null
+          example: 65536
+        source:
+          type: string
+          enum: [registry, not_found]
+          description: |
+            识别来源：
+            - `registry`：命中内置已知模型注册表
+            - `not_found`：注册表未命中，远程探测仅验证了模型存在性（或探测失败），需手填
+          example: registry
+
+    CompressRequest:
+      type: object
+      properties:
+        targetTokens:
+          type: integer
+          nullable: true
+          description: 目标上下文 token 数（可选，未来压缩策略使用）
+
+    CompressResultVO:
+      type: object
+      properties:
+        conversationId:
+          type: integer
+          format: int64
+          example: 1
+        compressed:
+          type: boolean
+          description: 是否实际执行了压缩（当前 noop 策略恒为 false）
+          example: false
+        beforeTokens:
+          type: integer
+          nullable: true
+          description: 压缩前上下文占用
+          example: 6120
+        afterTokens:
+          type: integer
+          nullable: true
+          description: 压缩后上下文占用
+          example: 6120
+        summaryMessageId:
+          type: integer
+          format: int64
+          nullable: true
+          description: 压缩生成的摘要消息 ID（未来策略产出）
+        message:
+          type: string
+          description: 面向用户的提示信息
+          example: 上下文压缩功能即将上线，敬请期待
+
+    R_ContextWindowLookupVO:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/ContextWindowLookupVO'
+
+    R_CompressResultVO:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/CompressResultVO'

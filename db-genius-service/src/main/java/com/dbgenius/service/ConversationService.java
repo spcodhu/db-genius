@@ -30,6 +30,15 @@ public interface ConversationService extends IService<Conversation> {
     void deleteConversation(Long userId, Long conversationId);
 
     /**
+     * 累加会话 token 消耗并更新当前上下文占用。
+     *
+     * @param roundTotalTokens 本轮请求消耗的 token 总数
+     * @param contextTokens    当前上下文占用（最后一次 LLM 调用的 prompt_tokens）
+     * @return 更新后的会话累计 token 数
+     */
+    long updateTokenUsage(Long conversationId, long roundTotalTokens, int contextTokens);
+
+    /**
      * LLM 上下文用途：仅返回参与对话轮次的用户消息与最终回答
      * （type ∈ user/summary），排除 step/tool 等过程消息，避免上下文膨胀。
      */

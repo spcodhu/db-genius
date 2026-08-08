@@ -16,6 +16,7 @@ public class UserModelConfigVO {
     private String displayName;
     private String baseUrl;
     private String modelName;
+    private Integer contextWindow;
     private Boolean isDefault;
     private Integer status;
     private String statusDesc;
