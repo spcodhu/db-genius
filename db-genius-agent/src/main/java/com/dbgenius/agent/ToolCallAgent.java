@@ -10,6 +10,7 @@ import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
@@ -130,6 +131,11 @@ public class ToolCallAgent extends ReActAgent {
             return false;
         }
 
+        // DSML 降级恢复：模型偶发把真实工具参数写进 content 的 DSML 文本、
+        // 而结构化 tool_calls 的 arguments 为空。此处反解析恢复真实参数，
+        // 保证 act() 执行的是真参数调用、消息历史保持结构化协议（治本）
+        response = recoverDsmlToolCalls(response);
+
         this.toolCallChatResponse = response;
 
         AssistantMessage assistantMessage = response.getResult().getOutput();
@@ -162,6 +168,14 @@ public class ToolCallAgent extends ReActAgent {
             return "No tools to call.";
         }
 
+        // 空参/非法参数护栏：DSML 恢复后仍有 arguments 空白的调用时，
+        // 绝不执行空参调用（莫名错误会把模型推向 DSML 文本螺旋），
+        // 改为合成可行动的重试反馈
+        List<AssistantMessage.ToolCall> calls = toolCallChatResponse.getResult().getOutput().getToolCalls();
+        if (calls.stream().anyMatch(tc -> !isValidArguments(tc.arguments()))) {
+            return rejectInvalidArgumentCalls(calls);
+        }
+
         Prompt prompt = new Prompt(messageList, chatOptions);
         ToolExecutionResult toolExecutionResult = toolCallingManager.executeToolCalls(prompt, toolCallChatResponse);
 
@@ -192,6 +206,96 @@ public class ToolCallAgent extends ReActAgent {
         log.info("[{}] act results: {}", name,
                 results.length() > 300 ? results.substring(0, 300) + "..." : results);
         return results;
+    }
+
+    /**
+     * DSML 降级恢复（治本）。DeepSeek thinking+流式偶发把真实工具参数写进 content 的
+     * DSML 标记、而结构化 tool_calls 的 arguments 为空（甚至整体缺失）。此处：
+     * ① arguments 空白的结构化调用按顺序用 DSML 反解析结果填补参数；
+     * ② 无结构化调用时合成新调用；
+     * ③ content 剥离 DSML 文本后重建 AssistantMessage（保留 metadata，
+     *    reasoning_content 回传不受影响），使消息历史保持结构化协议干净，
+     *    不再向后续轮次暴露 DSML 文本。
+     */
+    private ChatResponse recoverDsmlToolCalls(ChatResponse response) {
+        AssistantMessage output = response.getResult().getOutput();
+        String content = output.getText();
+        if (content == null || !DsmlToolCallParser.containsDsml(content)) {
+            return response;
+        }
+        List<DsmlToolCallParser.RecoveredToolCall> recovered = DsmlToolCallParser.parse(content);
+        if (recovered.isEmpty()) {
+            return response;
+        }
+
+        List<AssistantMessage.ToolCall> structured = output.getToolCalls();
+        List<AssistantMessage.ToolCall> rebuiltCalls = new ArrayList<>();
+        if (structured != null && !structured.isEmpty()) {
+            for (int i = 0; i < structured.size(); i++) {
+                AssistantMessage.ToolCall tc = structured.get(i);
+                if (isValidArguments(tc.arguments())) {
+                    rebuiltCalls.add(tc);
+                } else if (i < recovered.size()) {
+                    DsmlToolCallParser.RecoveredToolCall rc = recovered.get(i);
+                    String toolName = tc.name() != null && !tc.name().isBlank() ? tc.name() : rc.name();
+                    rebuiltCalls.add(new AssistantMessage.ToolCall(tc.id(), tc.type(), toolName, rc.argumentsJson()));
+                } else {
+                    rebuiltCalls.add(tc);
+                }
+            }
+            for (int i = structured.size(); i < recovered.size(); i++) {
+                DsmlToolCallParser.RecoveredToolCall rc = recovered.get(i);
+                rebuiltCalls.add(new AssistantMessage.ToolCall("dsml-" + i, "function", rc.name(), rc.argumentsJson()));
+            }
+        } else {
+            for (int i = 0; i < recovered.size(); i++) {
+                DsmlToolCallParser.RecoveredToolCall rc = recovered.get(i);
+                rebuiltCalls.add(new AssistantMessage.ToolCall("dsml-" + i, "function", rc.name(), rc.argumentsJson()));
+            }
+        }
+
+        AssistantMessage rebuilt = AssistantMessage.builder()
+                .content(DsmlToolCallParser.strip(content))
+                .properties(output.getMetadata())
+                .toolCalls(rebuiltCalls)
+                .build();
+        log.warn("[{}] Recovered {} DSML tool call(s) from content text", name, rebuiltCalls.size());
+        return new ChatResponse(
+                List.of(new Generation(rebuilt, response.getResult().getMetadata())), response.getMetadata());
+    }
+
+    /** arguments 必须是合法 JSON 对象才算可执行，空白/非对象一律拒绝 */
+    private boolean isValidArguments(String arguments) {
+        if (arguments == null || arguments.isBlank()) {
+            return false;
+        }
+        try {
+            return objectMapper.readTree(arguments).isObject();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * 空参/非法参数护栏的执行体：不真实执行，手工把 assistant 输出与合成的
+     * ToolResponseMessage（id 与 tool call 一致）写入 messageList，工具结果为
+     * 可行动的重试指引——模型能理解并纠正，而非收到 "config not found for ID null" 式噪音。
+     */
+    private String rejectInvalidArgumentCalls(List<AssistantMessage.ToolCall> calls) {
+        String feedback = "{\"success\":false,\"error\":\"Tool arguments were empty or invalid. "
+                + "Re-emit the tool call with all required parameters.\"}";
+        messageList.add(toolCallChatResponse.getResult().getOutput());
+        List<ToolResponseMessage.ToolResponse> responses = calls.stream()
+                .map(tc -> new ToolResponseMessage.ToolResponse(tc.id(), tc.name(), feedback))
+                .toList();
+        messageList.add(ToolResponseMessage.builder().responses(responses).build());
+        if (messageSink != null) {
+            messageSink.onToolResponses(currentStep, toToolResponsesJson(responses));
+        }
+        log.warn("[{}] Rejected {} tool call(s) with empty/invalid arguments", name, calls.size());
+        return calls.stream()
+                .map(tc -> "Tool " + tc.name() + " result: " + feedback)
+                .collect(Collectors.joining("\n"));
     }
 
     /** 工具调用记录序列化为 [{id,type,name,arguments}] JSON；无调用返回 null。 */
@@ -239,6 +343,8 @@ public class ToolCallAgent extends ReActAgent {
             3. For non-query tasks (data import, schema changes, database comparison, etc.), use Markdown sections, bullet lists, and code blocks to summarize what was done and the final conclusion.
             4. Keep the summary concise but complete: state what action was taken and the outcome.
             5. Respond in the same language as the user's original request.
+            6. You have NO tools available in this turn. NEVER output tool-call markup of any kind
+               (no tool_calls/invoke blocks, no XML-like tags, no internal markers). Output Markdown text only.
             """;
 
     private static final String SUMMARY_USER_PROMPT_TEMPLATE = """
@@ -279,6 +385,11 @@ public class ToolCallAgent extends ReActAgent {
 
             String markdown = response != null && response.getResult() != null
                     ? response.getResult().getOutput().getText() : null;
+            // 最后安全网（非主修复）：终态 summary 是权威落库内容，剥离任何 DSML 残留，
+            // 空白则走 fallback；前端以终态事件覆盖打字机增量
+            if (markdown != null) {
+                markdown = DsmlToolCallParser.strip(markdown);
+            }
             if (markdown == null || markdown.isBlank()) {
                 return fallbackSummary(userPrompt);
             }

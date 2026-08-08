@@ -125,6 +125,82 @@ class ToolCallAgentTest {
                 .onToolResponses(org.mockito.ArgumentMatchers.anyInt(), anyString());
     }
 
+    /** 构造日志原样的 DSML invoke 文本（标签经拼接，避免源码字面量干扰文本处理工具） */
+    private static String dsmlEchoInvoke() {
+        return "<｜｜DSML｜｜" + "invoke name=\"echo\">\n"
+                + "<｜｜DSML｜｜" + "parameter name=\"text\" string=\"true\">hello<" + "/｜｜DSML｜｜parameter>\n"
+                + "<" + "/｜｜DSML｜｜invoke>";
+    }
+
+    @Test
+    void shouldRecoverEmptyStructuredArgsFromDsmlContentAndExecute() throws Exception {
+        // 场景一（线上复现形态）：结构化 tool_calls 的 arguments 为空，真实参数在 DSML content 里
+        AssistantMessage assistant = AssistantMessage.builder()
+                .content(dsmlEchoInvoke())
+                .toolCalls(List.of(new AssistantMessage.ToolCall("call_1", "function", "echo", "")))
+                .build();
+        when(reasoningChatModel.streamAggregated(any(), any())).thenReturn(responseOf(assistant));
+
+        ToolCallAgent agent = new ToolCallAgent("TestAgent", "system", null, 1,
+                reasoningChatModel, new EchoTool());
+        agent.setMessageSink(sink);
+        agent.setExecutor(Runnable::run);
+        agent.runStream("echo hello");
+
+        // DSML 反解析后以真实参数执行，而非执行空参调用
+        ArgumentCaptor<String> responsesCaptor = ArgumentCaptor.forClass(String.class);
+        verify(sink).onToolResponses(org.mockito.ArgumentMatchers.eq(1), responsesCaptor.capture());
+        JsonNode responses = objectMapper.readTree(responsesCaptor.getValue());
+        assertThat(responses).hasSize(1);
+        assertThat(responses.get(0).get("name").asText()).isEqualTo("echo");
+        assertThat(responses.get(0).get("result").asText()).isEqualTo("\"echo:hello\"");
+    }
+
+    @Test
+    void shouldSynthesizeToolCallsFromPureDsmlContentAndExecute() throws Exception {
+        // 场景二：完全没有结构化 tool_calls，工具调用只存在于 DSML 文本
+        AssistantMessage assistant = AssistantMessage.builder()
+                .content(dsmlEchoInvoke())
+                .toolCalls(List.of())
+                .build();
+        when(reasoningChatModel.streamAggregated(any(), any())).thenReturn(responseOf(assistant));
+
+        ToolCallAgent agent = new ToolCallAgent("TestAgent", "system", null, 1,
+                reasoningChatModel, new EchoTool());
+        agent.setMessageSink(sink);
+        agent.setExecutor(Runnable::run);
+        agent.runStream("echo hello");
+
+        ArgumentCaptor<String> responsesCaptor = ArgumentCaptor.forClass(String.class);
+        verify(sink).onToolResponses(org.mockito.ArgumentMatchers.eq(1), responsesCaptor.capture());
+        JsonNode responses = objectMapper.readTree(responsesCaptor.getValue());
+        assertThat(responses).hasSize(1);
+        assertThat(responses.get(0).get("result").asText()).isEqualTo("\"echo:hello\"");
+    }
+
+    @Test
+    void shouldRejectBlankArgsWithActionableFeedbackWhenNoDsmlToRecover() throws Exception {
+        // 场景三：空参且无 DSML 可恢复 → 绝不执行空参调用，合成可行动的重试反馈
+        AssistantMessage assistant = AssistantMessage.builder()
+                .content("Let me call the tool.")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("call_1", "function", "echo", "")))
+                .build();
+        when(reasoningChatModel.streamAggregated(any(), any())).thenReturn(responseOf(assistant));
+
+        ToolCallAgent agent = new ToolCallAgent("TestAgent", "system", null, 1,
+                reasoningChatModel, new EchoTool());
+        agent.setMessageSink(sink);
+        agent.setExecutor(Runnable::run);
+        agent.runStream("echo hello");
+
+        ArgumentCaptor<String> responsesCaptor = ArgumentCaptor.forClass(String.class);
+        verify(sink).onToolResponses(org.mockito.ArgumentMatchers.eq(1), responsesCaptor.capture());
+        JsonNode responses = objectMapper.readTree(responsesCaptor.getValue());
+        assertThat(responses).hasSize(1);
+        assertThat(responses.get(0).get("result").asText())
+                .contains("Re-emit the tool call with all required parameters");
+    }
+
     private ChatResponse responseOf(AssistantMessage assistant) {
         return new ChatResponse(
                 List.of(new Generation(assistant, ChatGenerationMetadata.builder().build())),

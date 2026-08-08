@@ -18,7 +18,11 @@
       "Bash(cd /tmp/sai-inspect && unzip -q -o ~/.m2/repository/org/springframework/ai/spring-ai-openai/1.1.8/spring-ai-openai-1.1.8-sources.jar 'org/springframework/ai/openai/OpenAiChatOptions.java' && grep -n -B8 \"streamUsage\" org/springframework/ai/openai/OpenAiChatOptions.java | head -40)",
       "Bash(cd /tmp/sai-inspect && grep -n -B6 \"private Boolean streamUsage\" org/springframework/ai/openai/OpenAiChatOptions.java)",
       "Bash(cd /tmp/sai-inspect && grep -n \"streamUsage\\\\|stream_options\\\\|StreamOptions\" org/springframework/ai/openai/OpenAiChatOptions.java)",
-      "Bash(cd /tmp/sai-inspect && unzip -q -o ~/.m2/repository/org/springframework/ai/spring-ai-openai/1.1.8/spring-ai-openai-1.1.8-sources.jar 'org/springframework/ai/openai/OpenAiChatModel.java' && grep -n -B3 -A6 \"streamOptions\\\\|StreamOptions\" org/springframework/ai/openai/OpenAiChatModel.java | head -60)"
+      "Bash(cd /tmp/sai-inspect && unzip -q -o ~/.m2/repository/org/springframework/ai/spring-ai-openai/1.1.8/spring-ai-openai-1.1.8-sources.jar 'org/springframework/ai/openai/OpenAiChatModel.java' && grep -n -B3 -A6 \"streamOptions\\\\|StreamOptions\" org/springframework/ai/openai/OpenAiChatModel.java | head -60)",
+      "Bash(ls ~/.m2/repository/org/springframework/ai/spring-ai-openai/1.1.8/ 2>/dev/null)",
+      "Read(//Users/spcodhu/.m2/repository/org/springframework/ai/spring-ai-openai/1.1.8/**)",
+      "Bash(sed -n '40,90p;260,275p;1020,1060p' /Users/spcodhu/Code/backend/java/personal_blogs_backend/src/main/java/com/blog/service/impl/AiChatServiceImpl.java)",
+      "Read(//Users/spcodhu/Code/backend/java/personal_blogs_backend/src/main/java/com/blog/service/impl/**)"
     ]
   }
 }
