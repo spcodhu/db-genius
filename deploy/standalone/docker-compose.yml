@@ -1,0 +1,97 @@
+###############################################################################
+# DB-Genius full-stack one-click deployment (app + PostgreSQL + RabbitMQ).
+#
+# Usage (from the repository root):
+#   1. cp deploy/standalone/.env.example deploy/standalone/.env  and edit it
+#   2. docker compose -f deploy/standalone/docker-compose.yml up -d --build
+#
+# The PostgreSQL schema (app schema + tables) is auto-initialized on the first
+# boot via docker-entrypoint-initdb.d; the default admin account is seeded by
+# the application itself on startup (admin / admin123).
+#
+# Note: the backend exposes REST + SSE only; the web frontend is NOT open
+# source. Point your own frontend at http://localhost:8109/api, or contact
+# uguwkw@gmail.com for a fully managed deployment.
+###############################################################################
+
+name: db-genius
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-db_genius}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # First-boot initialization: create the app schema and all tables
+      - ../../db-genius-web/src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-db_genius}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${SPRING_RABBITMQ_USERNAME:-guest}
+      RABBITMQ_DEFAULT_PASS: ${SPRING_RABBITMQ_PASSWORD:-guest}
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    build:
+      # Build context is the repository root; the Dockerfile lives at the root
+      context: ../..
+      dockerfile: Dockerfile
+    ports:
+      - "${SERVER_PORT:-8109}:8109"
+    environment:
+      # Connect to the postgres container through the compose network
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-db_genius}?currentSchema=app
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # RabbitMQ lives in the same compose network: use the service name
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${SPRING_RABBITMQ_USERNAME:-guest}
+      SPRING_RABBITMQ_PASSWORD: ${SPRING_RABBITMQ_PASSWORD:-guest}
+      # LLM fallback configuration (used when a user has no personal model config)
+      DB_GENIUS_DEFAULT_MODEL_API_KEY: ${DB_GENIUS_DEFAULT_MODEL_API_KEY}
+      DB_GENIUS_DEFAULT_MODEL_BASE_URL: ${DB_GENIUS_DEFAULT_MODEL_BASE_URL:-https://api.deepseek.com}
+      DB_GENIUS_DEFAULT_MODEL: ${DB_GENIUS_DEFAULT_MODEL:-deepseek-v4-pro}
+      # AES-256-GCM key for database credentials, must be exactly 32 chars
+      DB_GENIUS_ENCRYPT_KEY: ${DB_GENIUS_ENCRYPT_KEY}
+      # Aliyun OSS (file upload storage)
+      ALIYUN_OSS_ENDPOINT: ${ALIYUN_OSS_ENDPOINT}
+      ALIYUN_OSS_BUCKET: ${ALIYUN_OSS_BUCKET}
+      ALIYUN_ACCESS_KEY_ID: ${ALIYUN_ACCESS_KEY_ID}
+      ALIYUN_ACCESS_KEY_SECRET: ${ALIYUN_ACCESS_KEY_SECRET}
+      ALIYUN_OSS_DIR_PREFIX: ${ALIYUN_OSS_DIR_PREFIX:-uploads/}
+      ALIYUN_OCR_ENABLED: ${ALIYUN_OCR_ENABLED:-false}
+      ALIYUN_OCR_ENDPOINT: ${ALIYUN_OCR_ENDPOINT:-ocr-api.cn-hangzhou.aliyuncs.com}
+      DB_GENIUS_TRIAL_ENABLED: ${DB_GENIUS_TRIAL_ENABLED:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  rabbitmqdata:

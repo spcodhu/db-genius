@@ -22,7 +22,8 @@
       "Bash(ls ~/.m2/repository/org/springframework/ai/spring-ai-openai/1.1.8/ 2>/dev/null)",
       "Read(//Users/spcodhu/.m2/repository/org/springframework/ai/spring-ai-openai/1.1.8/**)",
       "Bash(sed -n '40,90p;260,275p;1020,1060p' /Users/spcodhu/Code/backend/java/personal_blogs_backend/src/main/java/com/blog/service/impl/AiChatServiceImpl.java)",
-      "Read(//Users/spcodhu/Code/backend/java/personal_blogs_backend/src/main/java/com/blog/service/impl/**)"
+      "Read(//Users/spcodhu/Code/backend/java/personal_blogs_backend/src/main/java/com/blog/service/impl/**)",
+      "Bash(ls /Users/spcodhu/Code/backend/java/db-genius/db-genius-web/src/main/resources/db/; echo ---; ls /Users/spcodhu/Code/backend/java/db-genius/deploy/; echo ---; ls /Users/spcodhu/Code/backend/java/db-genius/docs/diagrams/ 2>/dev/null; echo ---; head -40 /Users/spcodhu/Code/backend/java/db-genius/db-genius-web/src/main/resources/db/schema.sql 2>/dev/null; echo ---; head -30 /Users/spcodhu/Code/backend/java/db-genius/deploy/build-local.sh)"
     ]
   }
 }

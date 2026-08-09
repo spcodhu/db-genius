@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="30.2.6">
+  <diagram name="Architecture-EN">
+    <mxGraphModel dx="1400" dy="1300" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1450" pageHeight="1300" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Frontend layer -->
+        <mxCell id="10" value="Frontend (Not Open Source)" style="swimlane;startSize=30;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1120" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="11" value="Web UI &#183; SSE Real-time Streaming Chat" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="10">
+          <mxGeometry x="310" y="42" width="500" height="38" as="geometry" />
+        </mxCell>
+
+        <!-- LLM external -->
+        <mxCell id="12" value="DeepSeek LLM&#xa;(OpenAI-compatible API)&#xa;&#xa;reasoning_content&#xa;tool calling" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;dashed=1;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="360" width="190" height="180" as="geometry" />
+        </mxCell>
+
+        <!-- Backend -->
+        <mxCell id="20" value="Spring Boot 3.4 Backend" style="swimlane;startSize=30;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontStyle=1;fontSize=13;swimlaneFillColor=#f0f5fc;" vertex="1" parent="1">
+          <mxGeometry x="40" y="150" width="1120" height="640" as="geometry" />
+        </mxCell>
+
+        <!-- Access layer -->
+        <mxCell id="21" value="Access Layer &#8212; Controllers" style="swimlane;startSize=30;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="20">
+          <mxGeometry x="20" y="45" width="1080" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="22" value="AuthController&#xa;(Sa-Token)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;" vertex="1" parent="21">
+          <mxGeometry x="15" y="50" width="250" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="23" value="DbConfigController" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;" vertex="1" parent="21">
+          <mxGeometry x="285" y="50" width="250" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="24" value="ChatController&#xa;POST /chat &#183; SSE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontStyle=1;" vertex="1" parent="21">
+          <mxGeometry x="555" y="50" width="250" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="25" value="FileController&#xa;(OSS upload)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;" vertex="1" parent="21">
+          <mxGeometry x="825" y="50" width="240" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- Intent routing -->
+        <mxCell id="30" value="Intent Routing &#8212; Strategy + Registry" style="swimlane;startSize=30;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="20">
+          <mxGeometry x="20" y="175" width="1080" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="31" value="IntentClassifier&#xa;(LLM Router, structured output)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="30">
+          <mxGeometry x="30" y="50" width="300" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="32" value="IntentHandlerRegistry&#xa;(auto-discovered Handler beans)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="30">
+          <mxGeometry x="430" y="50" width="300" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="33" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="30" source="31" target="32">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="34" value="SimpleChatHandler" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="30">
+          <mxGeometry x="30" y="125" width="245" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="35" value="SqlQueryHandler" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="30">
+          <mxGeometry x="290" y="125" width="245" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="36" value="WorkflowHandler" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="30">
+          <mxGeometry x="550" y="125" width="245" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="37" value="DbCompareHandler" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="30">
+          <mxGeometry x="810" y="125" width="245" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Agent framework -->
+        <mxCell id="40" value="AI Agent Framework &#8212; BaseAgent &#8594; ReActAgent &#8594; ToolCallAgent (Template Method)" style="swimlane;startSize=30;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="20">
+          <mxGeometry x="20" y="375" width="1080" height="245" as="geometry" />
+        </mxCell>
+        <mxCell id="41" value="DbSqlAgent&#xa;(natural language to SQL)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="40">
+          <mxGeometry x="30" y="50" width="330" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="42" value="DbWorkflowAgent&#xa;(multi-step DB workflows)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="40">
+          <mxGeometry x="380" y="50" width="330" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="43" value="DbCompareAgent&#xa;(schema diff + migration SQL)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="40">
+          <mxGeometry x="730" y="50" width="330" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="44" value="SqlExecuteTool" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="40">
+          <mxGeometry x="30" y="150" width="196" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="45" value="FileReadTool" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="40">
+          <mxGeometry x="242" y="150" width="196" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="46" value="ImageReadTool (OCR)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="40">
+          <mxGeometry x="454" y="150" width="196" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="47" value="DbCompareTool" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="40">
+          <mxGeometry x="666" y="150" width="196" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="48" value="TerminateTool" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="40">
+          <mxGeometry x="878" y="150" width="196" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- Infrastructure -->
+        <mxCell id="50" value="Infrastructure" style="swimlane;startSize=30;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="830" width="1120" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="51" value="PostgreSQL 16&#xa;System DB (schema: app)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="50">
+          <mxGeometry x="40" y="45" width="320" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="52" value="RabbitMQ&#xa;Async: connection verify / doc generation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="50">
+          <mxGeometry x="400" y="50" width="320" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="53" value="Aliyun OSS + OCR&#xa;File storage / image recognition" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="50">
+          <mxGeometry x="760" y="50" width="320" height="85" as="geometry" />
+        </mxCell>
+
+        <!-- Target databases -->
+        <mxCell id="60" value="User Target Databases (Dynamic Connection at Runtime)" style="swimlane;startSize=30;whiteSpace=wrap;html=1;fillColor=#fff8e6;strokeColor=#d6b656;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1030" width="1120" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="61" value="MySQL" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="60">
+          <mxGeometry x="20" y="45" width="200" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="62" value="PostgreSQL" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="60">
+          <mxGeometry x="238" y="45" width="200" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="63" value="MongoDB" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="60">
+          <mxGeometry x="456" y="45" width="200" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="64" value="MariaDB" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="60">
+          <mxGeometry x="674" y="45" width="200" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="65" value="TiDB" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="60">
+          <mxGeometry x="892" y="45" width="200" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="66" value="Doris" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="60">
+          <mxGeometry x="20" y="115" width="200" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="67" value="StarRocks" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="60">
+          <mxGeometry x="238" y="115" width="200" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="68" value="OceanBase" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="60">
+          <mxGeometry x="456" y="115" width="200" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="69" value="Oracle" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="60">
+          <mxGeometry x="674" y="115" width="200" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="70" value="SQL Server" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="60">
+          <mxGeometry x="892" y="115" width="200" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- Cross-layer edges -->
+        <mxCell id="e1" value="REST / SSE" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="11" target="24">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="250" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="24" target="31">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="dispatch agent (runStream)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="30" target="40">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="think(): streaming call&#xa;(tools + context)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.3;exitDx=0;exitDy=0;entryX=0;entryY=0.3;entryDx=0;entryDy=0;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="20" target="12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="tool-call decisions / answers" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=1;entryY=0.75;entryDx=0;entryDy=0;fontSize=11;labelBackgroundColor=#ffffff;dashed=1;" edge="1" parent="1" source="12" target="20">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="MyBatis-Plus persistence" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.15;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="20" target="51">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="async tasks" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="20" target="52">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="250" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e8" value="file upload / OCR" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.85;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="20" target="53">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" value="execute SQL via JDBC / drivers" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="50" target="60">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

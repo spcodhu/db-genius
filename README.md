@@ -1,269 +1,89 @@
-# DB-Genius - AI Database Master
+# DB-Genius — AI Database Master
 
-> Intelligent SQL generation, execution, and database comparison powered by AI agents.
+**English** | [中文文档](README.zh-CN.md)
 
-## Overview
+> Talk to your databases in natural language: query, import, and compare — from a single web page.
 
-DB-Genius is an AI-powered database management tool that transforms natural language into SQL, executes complex multi-step database workflows, and compares database structures for release management.
+DB-Genius is an open-source, AI-agent-driven database workbench. It turns natural language into SQL, runs multi-step database workflows, generates migration SQL for releases, and imports data from uploaded files — across **many heterogeneous databases at once**.
 
-## Architecture
+---
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Frontend (Vue 3)                       │
-│              SSE Real-time Streaming UI                   │
-└────────────────────────┬────────────────────────────────┘
-                         │ SSE / REST
-┌────────────────────────▼────────────────────────────────┐
-│                    Spring Boot 3.4                        │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐  │
-│  │ AuthCtrl │  │DbConfig  │  │      ChatCtrl        │  │
-│  │(Sa-Token)│  │Controller│  │   (POST /chat)       │  │
-│  └──────────┘  └──────────┘  └──────────┬───────────┘  │
-│                                         │                │
-│  ┌──────────────────────────────────────▼────────────┐  │
-│  │              Intent Router & Handlers              │  │
-│  │  IntentClassifier → IntentHandlerRegistry          │  │
-│  │  SimpleChat | SqlQuery | Workflow | Compare        │  │
-│  └──────────────────────────────────────┬─────────────┘  │
-│                                         │                │
-│  ┌──────────────────────────────────────▼────────────┐  │
-│  │              AI Agent Framework                     │  │
-│  │  BaseAgent → ReActAgent → ToolCallAgent             │  │
-│  │       ┌──────────┬────────────┬──────────┐         │  │
-│  │       │DbSqlAgent│DbWorkflow  │DbCompare │         │  │
-│  │       │          │Agent       │Agent     │         │  │
-│  │       └──────────┴────────────┴──────────┘         │  │
-│  │  Tools: SqlExecute | ExcelParse | DbCompare | Stop  │  │
-│  └────────────────────────────────────────────────────┘  │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────┐    │
-│  │  PostgreSQL   │  │   MyBatis-   │  │  AES-256   │    │
-│  │ (system DB)  │  │    Plus      │  │ Encryption  │    │
-│  └──────────────┘  └──────────────┘  └────────────┘    │
-└──────────────────────────────────────────────────────────┘
-                         │
-          ┌──────────────┼──────────────┐
-          ▼              ▼              ▼
-    ┌──────────┐  ┌──────────┐  ┌──────────┐
-    │ MySQL #1 │  │ MySQL #2 │  │ MySQL #N │
-    │ (user DB)│  │ (user DB)│  │ (user DB)│
-    └──────────┘  └──────────┘  └──────────┘
-```
+## 1. Introduction
 
-## Features
+### The pain points
 
-| Feature | Description |
-|---------|-------------|
-| **Natural Language SQL** | Describe queries in plain language, AI generates and executes SQL |
-| **File-to-Database Import** | Upload Excel files, AI parses and imports data into tables |
-| **Database Comparison** | Compare pre and test environments, generate deployment SQL |
-| **Real-time SSE Streaming** | Every step is transparently streamed to the frontend |
-| **Encrypted Credentials** | AES-256-GCM encryption for database passwords |
-| **Auto Documentation** | Automatically generates database schema docs for AI context |
+Teams that operate several large databases — often of **different engines** (MySQL, PostgreSQL, Oracle, SQL Server, Doris, …) — keep paying the same taxes every day:
 
-## Supported Databases
+- **Context switching**: every engine has its own client, dialect quirks, and credentials. Engineers juggle five tools just to answer one business question.
+- **Release risk**: before a production release, someone must diff the *pre* database against the *production* database by hand and write the migration SQL — slow, error-prone, and never fully trusted.
+- **Data onboarding**: business data arrives as Excel/CSV files or even screenshots; turning them into `CREATE TABLE` + `INSERT` scripts is pure manual labor.
 
-User-managed target databases connected at runtime (the system DB remains PostgreSQL):
+### What DB-Genius does
 
-| Type | `dbType` code | Driver | Notes |
-|------|---------------|--------|-------|
-| MySQL | `mysql` | mysql-connector-j | |
-| PostgreSQL | `postgresql` | postgresql | |
-| MongoDB | `mongodb` | mongodb-driver-sync | Non-SQL; JSON commands |
-| MariaDB | `mariadb` | mysql-connector-j | MySQL protocol compatible |
-| TiDB | `tidb` | mysql-connector-j | MySQL protocol compatible |
-| Doris | `doris` | mysql-connector-j | MySQL protocol compatible (FE port 9030) |
-| StarRocks | `starrocks` | mysql-connector-j | MySQL protocol compatible (FE port 9030) |
-| OceanBase | `oceanbase` | mysql-connector-j | MySQL mode tenants |
-| Oracle | `oracle` | ojdbc11 | `dbName` = service name |
-| SQL Server | `sqlserver` | mssql-jdbc | Metadata extraction covers the `dbo` schema |
+DB-Genius puts all of that behind **one chat box on one web page**:
 
-Adding a new type: add a `DbType` enum value, implement a `DatabaseAdapter` bean (JDBC types extend `AbstractJdbcAdapter`), and add the driver dependency — the registry auto-discovers it.
+| Capability | What you say | What happens |
+|------------|--------------|--------------|
+| Natural-language SQL | "How many orders were placed last week?" | The AI agent generates SQL, executes it against the selected databases, and streams the result back with an explanation. |
+| Multi-database control | "Compare the user table in DB A and DB B" | One session can address many user-managed databases of different engines simultaneously. |
+| Release diff & migration SQL | "Diff the pre DB against production and give me the migration script" | The compare agent extracts metadata from both sides, diffs structures, and generates a deployment-ready migration SQL document. |
+| File-to-database import | "Import this Excel into a new table" | Upload a file (or an image — OCR is supported); the workflow agent parses it and generates + executes the import SQL. |
 
-## Tech Stack
+Everything is streamed to the browser in real time over **SSE** — every reasoning step, every tool call, every SQL result is visible while the agent works.
 
-| Component | Technology |
-|-----------|-----------|
-| JDK | 22+ |
-| Framework | Spring Boot 3.4.4 + Spring AI 1.0.0 |
-| AI Model | DeepSeek (OpenAI-compatible API) |
-| ORM | MyBatis-Plus 3.5.9 |
-| Auth | Sa-Token 1.39.0 |
-| API Docs | OpenAPI 3 YAML (`api-docs.yaml`) |
-| System DB | PostgreSQL 16 |
-| Message Queue | RabbitMQ 3.13 (async db-config verify & doc generation) |
-| Excel | EasyExcel 4.0.3 |
-| Encryption | AES-256-GCM |
-| Logging | SLF4J + MDC (taskId tracing) |
+### Technical architecture
 
-## Module Structure
+![DB-Genius Architecture](docs/images/architecture-en.drawio.png)
 
-```
-db-genius/
-├── db-genius-common/     # Result wrapper, exceptions, AES encryption, utilities
-├── db-genius-model/      # Entity, DTO, VO, enums
-├── db-genius-service/    # Business logic, mappers, CRUD operations
-├── db-genius-agent/      # AI Agent framework, tools, workflow engine
-└── db-genius-web/        # Controllers, configs, application entry point
-```
+Key design points:
 
-## Agent Workflow
+- **Two database roles.** PostgreSQL 16 is the *system* database (users, db configs, conversations, schema `app`). User-managed *target* databases are connected dynamically at runtime through a `DbType` + `DatabaseAdapter` registry.
+- **LLM intent routing.** `IntentClassifier` (structured LLM output) → `IntentHandlerRegistry` (Strategy + Registry, auto-discovered `IntentHandler` beans). New intents are just new beans.
+- **Template-method agent framework.** `BaseAgent → ReActAgent → ToolCallAgent`, with concrete `DbSqlAgent`, `DbWorkflowAgent`, `DbCompareAgent`. `think()` streams model reasoning as SSE `reasoning` events; `act()` executes tools.
+- **Async backbone.** RabbitMQ drives async connection verification and schema-doc generation; Aliyun OSS stores uploaded files; credentials are encrypted with AES-256-GCM.
 
-```
-User Prompt
-    │
-    ▼
-┌─────────────────┐
-│ Intent Router   │  classify → route → clarify
-│ (POST /chat)    │
-└───────┬─────────┘
-        │
-┌───────▼───────┐
-│ IntentHandler │  SimpleChat | SqlQuery | Workflow | Compare
-│   Strategy    │
-└───────┬───────┘
-        │
-┌───────▼───────┐
-│  BaseAgent     │  State: IDLE → RUNNING
-│  runStream()   │  MDC taskId assigned
-└──────┬────────┘
-       │
-┌──────▼───────┐
-│  ReActAgent   │  step() = think() + act()
-│  step loop    │  Repeat up to maxSteps
-└──────┬───────┘
-       │
-┌──────▼──────────┐
-│  ToolCallAgent   │
-│  think():        │──── Call LLM (DeepSeek)
-│    LLM decides   │     with tool list
-│    which tools   │
-│  act():          │──── Execute tools via ToolCallingManager
-│    Run tools,    │     Update conversation history
-│    update state  │
-└──────┬──────────┘
-       │
-       ▼
-  SSE Events streamed to frontend:
-  {classifying} → {classified} → {routing} → {thinking} → {step} → {summary} → {done}
-```
+### Supported target databases
 
-## Quick Start
+| Type | `dbType` | Notes |
+|------|----------|-------|
+| MySQL | `mysql` | |
+| PostgreSQL | `postgresql` | |
+| MongoDB | `mongodb` | Non-SQL, JSON commands |
+| MariaDB | `mariadb` | MySQL protocol |
+| TiDB | `tidb` | MySQL protocol |
+| Doris | `doris` | MySQL protocol (FE port 9030) |
+| StarRocks | `starrocks` | MySQL protocol (FE port 9030) |
+| OceanBase | `oceanbase` | MySQL-mode tenants |
+| Oracle | `oracle` | `dbName` = service name |
+| SQL Server | `sqlserver` | Metadata covers the `dbo` schema |
 
-### Prerequisites
+Adding a new engine = add a `DbType` enum value + implement a `DatabaseAdapter` bean (JDBC types extend `AbstractJdbcAdapter`) + add the driver dependency. The registry discovers it automatically.
 
-- JDK 21+
-- PostgreSQL 16+
-- RabbitMQ 3.13+ (started via `docker compose up -d`)
-- DeepSeek API key
+### Tech stack
 
-### 1. Start PostgreSQL
+Spring Boot 3.4 · Spring AI 1.0 · JDK 21 · DeepSeek (OpenAI-compatible API) · MyBatis-Plus · Sa-Token · PostgreSQL 16 · RabbitMQ 3.13 · Aliyun OSS / OCR
 
-```bash
-docker compose up -d
-```
+---
 
-### 2. Configure Environment
+## 2. How It Works (Business Flow)
 
-```bash
-cp .env.example .env
-# Edit .env with your actual values
-```
+![DB-Genius Business Flow](docs/images/sequence-en.drawio.png)
 
-### 3. Build & Run
+### Step by step
 
-```bash
-# Build
-./mvnw clean package -DskipTests
+1. **Request.** The user types a natural-language request in the web UI and selects the target database(s). The frontend opens an SSE stream via `POST /chat` — the single unified entry point.
+2. **Intent classification.** The backend asks the LLM for a structured classification: `simple_chat`, `sql_query`, `workflow`, or `db_compare`. If confidence is low or prerequisites are missing (e.g. no database selected), the server emits a `clarify` event, closes the stream, and the frontend re-submits with the user's confirmed intent.
+3. **Routing.** `IntentHandlerRegistry` dispatches to the matching handler, which constructs the right agent (`DbSqlAgent` / `DbWorkflowAgent` / `DbCompareAgent`) and starts it with a request-scoped `taskId` (carried through all logs via MDC).
+4. **ReAct loop.** The agent repeats `think()` + `act()` until it finishes or hits the step limit:
+   - `think()` — the conversation context plus the tool list is sent to the LLM; reasoning deltas are streamed to the browser as `reasoning` events;
+   - `act()` — the chosen tools run for real: execute SQL on the target databases, read uploaded files, OCR images, or extract & diff metadata;
+   - each tool result is pushed as a `step` event, so the user watches the agent work.
+5. **Summary.** The final answer is streamed as Markdown `summary_delta` events (typewriter effect) and finalized by an authoritative `summary` event, followed by `done`.
+6. **Persistence.** Every user message, agent step, reasoning content, and tool call is persisted to the PostgreSQL system database, so conversations can be reopened and replayed.
 
-# Run with environment variables
-export $(cat .env | xargs)
-java -jar db-genius-web/target/db-genius-web-1.0.0.jar
-```
+### SSE event protocol
 
-### 4. Access
-
-- Application: http://localhost:8109/api
-- API Docs: see `api-docs.yaml` in project root
-- Default admin: `admin` / `admin123`
-
-## API Endpoints
-
-### Authentication
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/auth/login` | Login |
-| POST | `/auth/logout` | Logout |
-| POST | `/auth/user` | Create user (admin) |
-
-### Database Configuration
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/db-config` | List configs |
-| POST | `/db-config` | Create config |
-| PUT | `/db-config/{id}` | Update config |
-| DELETE | `/db-config/{id}` | Delete config |
-| POST | `/db-config/{id}/test` | Test connection |
-| POST | `/db-config/{id}/generate-doc` | Generate docs |
-| GET | `/db-config/{id}/doc` | Get docs |
-
-### AI Chat (SSE)
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/chat` | Unified chat entry with intent recognition (SSE stream) |
-| GET | `/chat/conversations` | List conversations |
-| GET | `/chat/conversations/{id}/messages` | Get messages |
-| DELETE | `/chat/conversations/{id}` | Delete conversation |
-
-**Request body example:**
-```json
-{
-  "message": "查询用户表总数",
-  "dbConfigIds": [1],
-  "conversationId": null
-}
-```
-
-**Intent routing:**
-- `simple_chat` — simple Q&A, no DB required
-- `sql_query` — single SQL query, requires `dbConfigIds`
-- `workflow` — multi-step workflow, requires `dbConfigIds`, optional `fileIds`
-- `db_compare` — compare two DBs, requires `preDbConfigId` + `testDbConfigId`
-
-**Clarification flow:**
-When confidence is low or prerequisites are missing, the server emits a `clarify` event and closes the stream. The frontend should present the options and call `/chat` again with the selected intent in `confirmedIntent`.
-
-### File Upload
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/file/upload` | Upload file |
-
-### Trial Status
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/trial/status` | Check if trial mode is enabled |
-
-### Contact Sales
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/sales/contact` | Submit sales inquiry (public, no auth) |
-
-## Trial Mode
-
-When `DB_GENIUS_TRIAL_ENABLED=true`, the system runs in public trial mode with the following restrictions:
-
-- A built-in read-only `db-genius` database config is automatically created.
-- Database config connection info (`host`, `port`, `dbName`, `username`, `docContent`) is masked with `*` in API responses.
-- Creating / updating / deleting / testing / regenerating docs for the built-in config is blocked.
-- File upload (`/file/upload`) and user creation (`/auth/user`) are blocked.
-- Only read-only SQL (`SELECT`, `SHOW`, `DESC`, `EXPLAIN`) is allowed in `sql_query` intent.
-- `workflow` and `db_compare` chat intents are blocked.
-- All blocked operations return `403` with code `R.fail(403, "...")`.
-
-## SSE Event Protocol
-
-All SSE events follow this JSON format:
+All events are JSON objects:
 
 ```json
 {
@@ -275,74 +95,93 @@ All SSE events follow this JSON format:
 }
 ```
 
-| Type | Description |
-|------|-------------|
-| `classifying` | System is analyzing the user intent |
-| `classified` | Intent classification result JSON |
-| `clarify` | Low confidence / missing prerequisite, ask user to confirm |
-| `routing` | Routing to the selected handler |
-| `thinking` | Agent is analyzing the request |
-| `reasoning` | LLM reasoning content (thinking mode); streaming deltas for both simple chat and agent steps |
-| `content` | Streaming text token for simple chat |
-| `step` | Tool execution result |
-| `summary_delta` | Streaming Markdown delta of the final summary (typewriter rendering); may be preceded by `reasoning` deltas |
-| `summary` | Terminal full-text Markdown summary; authoritative content that finalizes (overwrites) any streamed deltas |
-| `error` | Error details |
-| `done` | Stream end signal |
+| Type | Meaning |
+|------|---------|
+| `classifying` / `classified` | Intent analysis started / result |
+| `clarify` | Low confidence or missing prerequisite — frontend shows options and re-submits with `confirmedIntent` |
+| `routing` | Dispatched to a handler |
+| `thinking` / `reasoning` | Agent analysis / streamed LLM reasoning |
+| `content` | Streaming text (simple chat) |
+| `step` | One tool-execution result inside the ReAct loop |
+| `summary_delta` / `summary` | Streaming final Markdown / authoritative full text |
+| `error` / `done` | Failure details / end of stream |
 
-### Message Persistence
+The complete REST + SSE contract is described in [`api-docs.yaml`](api-docs.yaml) (OpenAPI 3).
 
-`message` 表除 `role/content/step/type` 外，还持久化以下字段：
+---
 
-| Column | Description |
-|--------|-------------|
-| `reasoning_content` | 模型思考内容（供应商未返回时为 NULL） |
-| `tool_calls` | 工具调用记录 JSON：`[{id,type,name,arguments}]`（无调用为 NULL） |
+## 3. Deployment
 
-`type` 语义：
+### 3.1 One-click deployment (Docker Compose, full stack)
 
-| type | role | Description |
-|------|------|-------------|
-| `user` | user | 用户消息 |
-| `summary` | assistant | 最终回答（simple chat 与 agent 流程共用） |
-| `step` | assistant | Agent 每步的 assistant 消息（正文 + 思考 + 工具调用），`step` 列与 SSE 步骤对齐 |
-| `tool` | tool | Agent 每步工具执行结果，content 为 `[{id,name,result}]` JSON |
+The [`deploy/standalone/`](deploy/standalone) stack starts **everything** the system needs — PostgreSQL, RabbitMQ, and the application — in one command:
 
-上下文注入（意图分类、历史消息）只取 `user`/`summary`，`step`/`tool` 过程消息仅用于前端回显；历史推理不会回传给模型（`reasoning_content` 回传仅在同一轮 tool-call 会话内由 `ReasoningChatModel` 处理）。
+```bash
+git clone https://github.com/spcodhu/db-genius.git && cd db-genius
 
-## Environment Variables
+# 1. Configure
+cp deploy/standalone/.env.example deploy/standalone/.env
+#    edit deploy/standalone/.env  (at minimum: DB_GENIUS_DEFAULT_MODEL_API_KEY,
+#    DB_GENIUS_ENCRYPT_KEY — exactly 32 chars — and the Aliyun OSS keys)
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `SPRING_DATASOURCE_URL` | PostgreSQL JDBC URL | Yes |
-| `SPRING_DATASOURCE_USERNAME` | PostgreSQL username | Yes |
-| `SPRING_DATASOURCE_PASSWORD` | PostgreSQL password | Yes |
-| `DEEPSEEK_API_KEY` | DeepSeek API key | Yes |
-| `DB_GENIUS_ENCRYPT_KEY` | AES-256 encryption key (32 chars) | Yes |
-| `ALIYUN_OSS_ENDPOINT` | Aliyun OSS endpoint (file upload storage) | Yes |
-| `ALIYUN_OSS_BUCKET` | Aliyun OSS bucket name | Yes |
-| `ALIYUN_ACCESS_KEY_ID` | Aliyun RAM AccessKey ID (OSS read/write + OCR) | Yes |
-| `ALIYUN_ACCESS_KEY_SECRET` | Aliyun RAM AccessKey secret | Yes |
-| `ALIYUN_OSS_DIR_PREFIX` | OSS object key prefix | No (default `uploads/`) |
-| `ALIYUN_OCR_ENABLED` | Enable Aliyun OCR for image text recognition | No (default `false`) |
-| `ALIYUN_OCR_ENDPOINT` | Aliyun OCR endpoint | No (default `ocr-api.cn-hangzhou.aliyuncs.com`) |
-| `SPRING_RABBITMQ_HOST` | RabbitMQ host | No (default `localhost`) |
-| `SPRING_RABBITMQ_PORT` | RabbitMQ port | No (default `5672`) |
-| `SPRING_RABBITMQ_USERNAME` | RabbitMQ username | No (default `guest`) |
-| `SPRING_RABBITMQ_PASSWORD` | RabbitMQ password | No (default `guest`) |
+# 2. Start (builds the app image with Maven inside Docker; no local JDK needed)
+docker compose -f deploy/standalone/docker-compose.yml up -d --build
+```
 
-## Design Patterns
+On first boot the PostgreSQL container auto-initializes the `app` schema from `db-genius-web/src/main/resources/db/schema.sql`, and the application seeds the default admin account.
 
-| Pattern | Usage |
-|---------|-------|
-| Template Method | BaseAgent → ReActAgent → ToolCallAgent lifecycle |
-| Strategy | IntentHandler implementations for different intents |
-| Registry | IntentHandlerRegistry auto-discovers all Handler beans |
-| LLM Router | IntentClassifier routes user requests via structured output |
-| State Machine | AgentState (IDLE → RUNNING → FINISHED/ERROR) |
-| TypeHandler | MyBatis auto-fill for timestamps |
-| MDC Tracing | Request-level taskId in all log entries |
+- Backend API: `http://localhost:8109/api`
+- Default admin: `admin` / `admin123`
+- RabbitMQ management UI: `http://localhost:15672`
 
-## License
+Useful commands (run from the repo root):
 
-MIT
+```bash
+docker compose -f deploy/standalone/docker-compose.yml logs -f app   # backend logs
+docker compose -f deploy/standalone/docker-compose.yml ps           # status
+docker compose -f deploy/standalone/docker-compose.yml down         # stop (add -v to wipe data volumes)
+```
+
+### 3.2 Custom deployment (bring your own PostgreSQL)
+
+If you already run PostgreSQL separately (as we do in production), use the root [`docker-compose.yml`](docker-compose.yml) which starts only `app` + `rabbitmq` and points at an external database via `SPRING_DATASOURCE_URL` (remember `?currentSchema=app`):
+
+```bash
+cp .env.example .env   # fill in your external PostgreSQL JDBC URL etc.
+docker compose up -d --build
+```
+
+Or run the jar on bare metal (JDK 21 required):
+
+```bash
+./mvnw clean package -DskipTests
+export $(cat .env | xargs)
+java -jar db-genius-web/target/db-genius-web-1.0.0.jar
+```
+
+Bare-metal scripts for production servers live in [`deploy/`](deploy) (`build-docker.sh`, `build-local.sh`).
+
+### 3.3 About the frontend
+
+> **The web frontend is not open source (yet).** The backend is a complete, self-describing REST + SSE API, so you are free to build your own frontend against [`api-docs.yaml`](api-docs.yaml) — any SSE-capable client works.
+>
+> - Want a **fully managed deployment** (hosted frontend + backend, upgrades included)? Contact **uguwkw@gmail.com**.
+> - Just want to try it first? A public trial is running at **https://db-genius.com/**.
+
+---
+
+## 4. License & Contributing
+
+### License
+
+DB-Genius is released under the [MIT License](LICENSE) — one of the most permissive licenses available: **free for commercial use**, modification, distribution, and private use, with essentially no obligations beyond keeping the copyright notice.
+
+### Contributing
+
+Issues and pull requests are warmly welcome — this project grows with its community.
+
+- **Bug report / feature request**: open an Issue with a minimal reproduction or a clear use case.
+- **Pull requests**: fork the repo, create a feature branch, keep changes focused, and describe *why* in the PR description. New database adapters (`DbType` + `DatabaseAdapter`) and new intent handlers (`IntentHandler`) are especially welcome — both are plug-in points by design.
+- **Questions / commercial support**: uguwkw@gmail.com
+
+Thank you to everyone who contributes code, docs, translations, and feedback!

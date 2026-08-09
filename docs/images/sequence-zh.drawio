@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="30.2.6">
+  <diagram name="Sequence-ZH">
+    <mxGraphModel dx="1400" dy="1050" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1370" pageHeight="1040" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- 参与者 -->
+        <mxCell id="p1" value="用户" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="30" width="170" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="p2" value="Web 前端&#xa;（未开源）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="265" y="30" width="170" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="p3" value="后端 API&#xa;（Chat + 意图路由）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="480" y="30" width="170" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="p4" value="AI Agent&#xa;（ReAct 循环）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="695" y="30" width="170" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="p5" value="DeepSeek 大模型" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;dashed=1;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="910" y="30" width="170" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="p6" value="目标数据库" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1125" y="30" width="170" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- 生命线 -->
+        <mxCell id="l1" style="endArrow=none;dashed=1;html=1;strokeColor=#999999;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="135" y="80" as="sourcePoint" />
+            <mxPoint x="135" y="920" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="l2" style="endArrow=none;dashed=1;html=1;strokeColor=#999999;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="80" as="sourcePoint" />
+            <mxPoint x="350" y="920" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="l3" style="endArrow=none;dashed=1;html=1;strokeColor=#999999;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="565" y="80" as="sourcePoint" />
+            <mxPoint x="565" y="920" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="l4" style="endArrow=none;dashed=1;html=1;strokeColor=#999999;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="780" y="80" as="sourcePoint" />
+            <mxPoint x="780" y="920" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="l5" style="endArrow=none;dashed=1;html=1;strokeColor=#999999;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="995" y="80" as="sourcePoint" />
+            <mxPoint x="995" y="920" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="l6" style="endArrow=none;dashed=1;html=1;strokeColor=#999999;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1210" y="80" as="sourcePoint" />
+            <mxPoint x="1210" y="920" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- 循环框 -->
+        <mxCell id="frame" value="loop&#160;&#160;ReAct 循环（直至任务完成或达到最大步数）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#666666;dashed=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=4;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="300" y="440" width="970" height="350" as="geometry" />
+        </mxCell>
+
+        <!-- 消息 -->
+        <mxCell id="m1" value="输入自然语言请求，选择目标数据库" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;fontSize=11;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="135" y="130" as="sourcePoint" />
+            <mxPoint x="350" y="130" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m2" value="POST /chat（SSE 长连接）" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;fontSize=11;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="185" as="sourcePoint" />
+            <mxPoint x="565" y="185" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m3" value="意图分类（结构化输出）" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;fontSize=11;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="565" y="240" as="sourcePoint" />
+            <mxPoint x="995" y="240" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m4" value="intent = sql_query / workflow / db_compare" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;strokeColor=#999999;fontSize=11;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="995" y="295" as="sourcePoint" />
+            <mxPoint x="565" y="295" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m5" value="SSE：classifying / classified / routing" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;strokeColor=#999999;fontSize=11;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="565" y="350" as="sourcePoint" />
+            <mxPoint x="350" y="350" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m6" value="分发 Handler，启动 Agent.runStream()" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;fontSize=11;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="565" y="405" as="sourcePoint" />
+            <mxPoint x="780" y="405" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m7" value="think()：会话上下文 + 工具定义" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;fontSize=11;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="780" y="495" as="sourcePoint" />
+            <mxPoint x="995" y="495" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m8" value="工具调用决策（推理内容流式返回）" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;strokeColor=#999999;fontSize=11;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="995" y="550" as="sourcePoint" />
+            <mxPoint x="780" y="550" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m9" value="SSE：thinking / reasoning / step 事件" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;strokeColor=#999999;fontSize=11;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="780" y="605" as="sourcePoint" />
+            <mxPoint x="350" y="605" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m10" value="act()：执行 SQL / 解析文件 / 对比结构" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;fontSize=11;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="780" y="660" as="sourcePoint" />
+            <mxPoint x="1210" y="660" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m11" value="执行结果" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;strokeColor=#999999;fontSize=11;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1210" y="715" as="sourcePoint" />
+            <mxPoint x="780" y="715" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m12" value="SSE：summary_delta / summary / done" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;strokeColor=#999999;fontSize=11;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="780" y="830" as="sourcePoint" />
+            <mxPoint x="350" y="830" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m13" value="渲染流式过程与最终结果" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;strokeColor=#999999;fontSize=11;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="885" as="sourcePoint" />
+            <mxPoint x="135" y="885" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- 备注 -->
+        <mxCell id="note" value="注：每一步的消息、推理内容与工具调用&#xa;都会持久化到 PostgreSQL（系统库）。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacingLeft=8;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="50" y="940" width="380" height="70" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
