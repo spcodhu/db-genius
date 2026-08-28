@@ -35,6 +35,12 @@
             <groupId>com.aliyun</groupId>
             <artifactId>ocr_api20210707</artifactId>
         </dependency>
+        <!-- 上下文压缩：本地近似 token 估算（cl100k_base，非精确计费口径） -->
+        <dependency>
+            <groupId>com.knuddels</groupId>
+            <artifactId>jtokkit</artifactId>
+            <version>1.1.0</version>
+        </dependency>
 
         <!-- Test -->
         <dependency>

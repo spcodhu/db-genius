@@ -6,7 +6,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * 上下文压缩结果。本轮压缩为空实现（Noop），{@code compressed} 恒为 false。
+ * 上下文压缩结果。{@code compressed} 反映本次是否实际执行了压缩（消息数不足阈值或摘要调用失败等
+ * 情况下为 false，见 {@code SummaryContextCompressor}/{@code NoopContextCompressor}）。
+ * {@code beforeTokens}/{@code afterTokens} 为近似估算值，非计费口径。
  */
 @Data
 @Builder

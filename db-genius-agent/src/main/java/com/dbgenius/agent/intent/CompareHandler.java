@@ -5,6 +5,7 @@ import com.dbgenius.agent.ChatModelSession;
 import com.dbgenius.agent.DbCompareAgent;
 import com.dbgenius.agent.ReasoningChatModel;
 import com.dbgenius.agent.ToolCallAgent;
+import com.dbgenius.agent.compress.StepHistoryCondenser;
 import com.dbgenius.agent.tool.DbCompareTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
@@ -27,6 +28,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -52,6 +54,10 @@ public class CompareHandler implements IntentHandler {
     private final DbCompareTool dbCompareTool;
     private final SqlExecuteTool sqlExecuteTool;
     private final TerminateTool terminateTool;
+    private final StepHistoryCondenser stepHistoryCondenser;
+
+    @Value("${db-genius.context.tool-output-max-chars:4000}")
+    private int toolOutputMaxChars;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -114,6 +120,8 @@ public class CompareHandler implements IntentHandler {
                     conversation.getId(), usageVO.getTotalTokens(), usageVO.getContextTokens());
             usageVO.setConversationTotalTokens(newTotal);
         });
+        agent.setStepCondenser(stepHistoryCondenser);
+        agent.setToolOutputMaxChars(toolOutputMaxChars);
         agent.setMessageSink(new ToolCallAgent.AgentMessageSink() {
             @Override
             public void onAssistant(int step, String content, String reasoningContent, String toolCallsJson) {

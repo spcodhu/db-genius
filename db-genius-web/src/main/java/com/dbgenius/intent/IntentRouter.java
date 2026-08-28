@@ -69,7 +69,7 @@ public class IntentRouter {
                 // 3. 加载历史上下文
                 List<Message> history = loadRecentHistory(request.getConversationId());
 
-                // 3.1 自动压缩钩子（默认关闭；本轮压缩为 Noop 空实现）
+                // 3.1 自动压缩钩子（默认关闭；开源版和正式版环境变量里面都已经使用环境变量打开）
                 autoCompressService.compressIfNeeded(request.getConversationId(), userId);
 
                 // 4. 构建分类上下文

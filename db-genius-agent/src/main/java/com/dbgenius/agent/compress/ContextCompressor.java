@@ -7,9 +7,9 @@ import com.dbgenius.model.vo.CompressResultVO;
  *
  * <p>镜像项目现有 IntentHandler + IntentHandlerRegistry 的自动发现模式：
  * 实现类注册为 Spring Bean，由 {@link ContextCompressService} 按 {@link #strategyCode()}
- * 选择。未来新增真实压缩策略（如 LLM 摘要压缩）只需新增实现类，零侵入。
+ * 选择。新增压缩策略只需新增实现类，零侵入。
  *
- * <p>未来契约（与现有 type="summary" 机制融合）：
+ * <p>落库契约（{@link SummaryContextCompressor} 已实现）：
  * <ul>
  *   <li>压缩产物以 assistant + {@code type="summary"} 消息落库，自动进入后续上下文；</li>
  *   <li>被压缩的旧消息 type 置为 "compressed"，被 getRecentMessages 的
@@ -26,7 +26,8 @@ public interface ContextCompressor {
      * 对指定会话执行上下文压缩。
      *
      * @param conversationId 会话 ID（调用方已完成属主校验）
+     * @param userId         会话所属用户 ID，用于解析压缩摘要所用的当前生效模型配置
      * @param options        压缩选项，可为 null
      */
-    CompressResultVO compress(Long conversationId, CompressOptions options);
+    CompressResultVO compress(Long conversationId, Long userId, CompressOptions options);
 }

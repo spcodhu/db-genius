@@ -83,10 +83,25 @@ db-genius:
     builtin-username: ${DB_GENIUS_TRIAL_BUILTIN_USERNAME:}
     builtin-password: ${DB_GENIUS_TRIAL_BUILTIN_PASSWORD:}
   context:
-    # 自动压缩上下文（当前压缩为空实现，默认关闭）
+    # 跨轮上下文压缩：LLM 摘要策略已实现（SummaryContextCompressor），
+    # auto-compress.enabled 控制"下一轮开始前自动触发"，默认关闭，灰度打开；
+    # 手动触发（POST /chat/conversations/{id}/compress）不受此开关限制，随时可用。
     auto-compress:
       enabled: ${DB_GENIUS_AUTO_COMPRESS_ENABLED:false}
       threshold: ${DB_GENIUS_AUTO_COMPRESS_THRESHOLD:0.8}
+      # 压缩策略：summary（LLM 摘要，默认）｜noop（空实现，一键回退）
+      strategy: ${DB_GENIUS_AUTO_COMPRESS_STRATEGY:summary}
+      # 压缩时始终保留最近 N 条消息原样不动，更早的消息（含此前摘要）被折叠进新摘要
+      keep-last-messages: ${DB_GENIUS_AUTO_COMPRESS_KEEP_LAST:6}
+    # 单次 Agent 运行内（ToolCallAgent 多步 ReAct 循环）的上下文压缩，默认关闭，灰度打开。
+    # 与 auto-compress 相互独立：auto-compress 处理"跨轮历史"，in-run-compress 处理
+    # "单轮内部因多步工具调用不断累加导致的 context 膨胀"。
+    in-run-compress:
+      enabled: ${DB_GENIUS_IN_RUN_COMPRESS_ENABLED:false}
+      threshold: ${DB_GENIUS_IN_RUN_COMPRESS_THRESHOLD:0.7}
+      keep-last-steps: ${DB_GENIUS_IN_RUN_COMPRESS_KEEP_LAST_STEPS:4}
+    # 工具输出截断安全网：始终生效，不受任何开关限制。防止单条工具结果（如大结果集）过大。
+    tool-output-max-chars: ${DB_GENIUS_TOOL_OUTPUT_MAX_CHARS:4000}
 
 logging:
   level:

@@ -1,5 +1,6 @@
 package com.dbgenius.agent;
 
+import com.dbgenius.agent.compress.StepHistoryCondenser;
 import com.dbgenius.agent.model.AgentState;
 import com.dbgenius.model.vo.SseEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -62,8 +63,16 @@ public class ToolCallAgent extends ReActAgent {
     protected final ToolCallingManager toolCallingManager;
     protected final ChatOptions chatOptions;
 
+    private static final int DEFAULT_TOOL_OUTPUT_MAX_CHARS = 4000;
+
     private ChatResponse toolCallChatResponse;
     private AgentMessageSink messageSink;
+    /** 工具输出截断安全网阈值（字符数），默认与 db-genius.context.tool-output-max-chars 一致，可通过 setter 覆盖 */
+    private int toolOutputMaxChars = DEFAULT_TOOL_OUTPUT_MAX_CHARS;
+    /** 单轮内步骤历史压缩器，默认不装配（null），行为与现状一致 */
+    private StepHistoryCondenser stepCondenser;
+    /** 本轮 Agent 生成内容在 messageList 中的起始下标（历史消息 + 当前用户输入之后），由 onStepStart 记录 */
+    private int turnStartIndex;
 
     public ToolCallAgent(String name, String systemPrompt, String nextStepPrompt,
                          int maxSteps, ReasoningChatModel reasoningChatModel,
@@ -95,12 +104,23 @@ public class ToolCallAgent extends ReActAgent {
         this.messageSink = messageSink;
     }
 
+    public void setToolOutputMaxChars(int toolOutputMaxChars) {
+        this.toolOutputMaxChars = toolOutputMaxChars;
+    }
+
+    public void setStepCondenser(StepHistoryCondenser stepCondenser) {
+        this.stepCondenser = stepCondenser;
+    }
+
     @Override
     protected void onStepStart(SseEmitter emitter, String userPrompt) throws Exception {
         if (!historyMessages.isEmpty()) {
             messageList.addAll(historyMessages);
         }
         messageList.add(new UserMessage(userPrompt));
+        // 记录本轮 Agent 自己生成内容的起始下标：单轮内压缩（StepHistoryCondenser）只作用于此下标之后的
+        // 步骤消息，历史消息与当前用户输入永远不动，与跨轮压缩职责边界清晰分离
+        turnStartIndex = messageList.size();
         sendEvent(emitter, SseEvent.of(taskId, 0, "thinking", "Analyzing your request..."));
     }
 
@@ -110,6 +130,11 @@ public class ToolCallAgent extends ReActAgent {
      */
     @Override
     protected boolean think(){
+        if (stepCondenser != null) {
+            Integer contextWindow = tokenUsageAccumulator != null ? tokenUsageAccumulator.getContextWindow() : null;
+            stepCondenser.condenseIfNeeded(messageList, turnStartIndex, systemPrompt, reasoningChatModel, contextWindow);
+        }
+
         if (nextStepPrompt != null && !nextStepPrompt.isBlank() && currentStep > 1) {
             messageList.add(new UserMessage(nextStepPrompt));
         }
@@ -179,11 +204,16 @@ public class ToolCallAgent extends ReActAgent {
         Prompt prompt = new Prompt(messageList, chatOptions);
         ToolExecutionResult toolExecutionResult = toolCallingManager.executeToolCalls(prompt, toolCallChatResponse);
 
-        messageList.clear();
-        messageList.addAll(toolExecutionResult.conversationHistory());
+        List<Message> history = toolExecutionResult.conversationHistory();
+        ToolResponseMessage toolResponseMessage = (ToolResponseMessage) history.get(history.size() - 1);
 
-        ToolResponseMessage toolResponseMessage = (ToolResponseMessage)
-                toolExecutionResult.conversationHistory().get(toolExecutionResult.conversationHistory().size() - 1);
+        // 工具输出截断安全网（始终生效）：单条工具结果超过阈值时，只截断写入 messageList
+        // （下一次发给模型的 prompt）的版本，避免超大结果集/文档内容把单轮 context 撑爆；
+        // messageSink 落库、SSE 展示仍使用未截断的原始结果，审计轨迹与前端展示不受影响。
+        List<Message> boundedHistory = new ArrayList<>(history);
+        boundedHistory.set(boundedHistory.size() - 1, truncateToolResponses(toolResponseMessage));
+        messageList.clear();
+        messageList.addAll(boundedHistory);
 
         // todo 结束标识符在 systemPrompt 里面输入给模型了，这里直接硬编码，后面可以考虑更优雅的方式。
         boolean terminateToolCalled = toolResponseMessage.getResponses().stream()
@@ -206,6 +236,34 @@ public class ToolCallAgent extends ReActAgent {
         log.info("[{}] act results: {}", name,
                 results.length() > 300 ? results.substring(0, 300) + "..." : results);
         return results;
+    }
+
+    /**
+     * 对一步工具执行结果做截断安全网：逐条检查 {@link ToolResponseMessage.ToolResponse#responseData()}，
+     * 超过 {@link #toolOutputMaxChars} 则替换为"头部预览 + 尾部预览 + 已省略字符数"的形式。
+     */
+    private ToolResponseMessage truncateToolResponses(ToolResponseMessage original) {
+        List<ToolResponseMessage.ToolResponse> truncated = original.getResponses().stream()
+                .map(this::truncateToolResponse)
+                .toList();
+        return ToolResponseMessage.builder().responses(truncated).build();
+    }
+
+    private ToolResponseMessage.ToolResponse truncateToolResponse(ToolResponseMessage.ToolResponse response) {
+        String data = response.responseData();
+        if (data == null || data.length() <= toolOutputMaxChars) {
+            return response;
+        }
+        int headLen = toolOutputMaxChars * 2 / 3;
+        int tailLen = Math.max(0, toolOutputMaxChars - headLen);
+        String head = data.substring(0, headLen);
+        String tail = tailLen > 0 ? data.substring(data.length() - tailLen) : "";
+        int omitted = data.length() - head.length() - tail.length();
+        String preview = head + "\n...(已省略 " + omitted + " 字符，工具 " + response.name()
+                + " 原始结果共 " + data.length() + " 字符，已截断以避免 context 膨胀)...\n" + tail;
+        log.warn("[{}] Truncated oversized tool response from '{}': {} -> {} chars",
+                name, response.name(), data.length(), preview.length());
+        return new ToolResponseMessage.ToolResponse(response.id(), response.name(), preview);
     }
 
     /**

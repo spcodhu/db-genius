@@ -3,6 +3,7 @@ package com.dbgenius.service;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.MybatisMapperBuilderAssistant;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.dbgenius.mapper.MessageMapper;
 import com.dbgenius.model.entity.Message;
@@ -15,7 +16,9 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -71,6 +74,23 @@ class ConversationServiceImplTest {
     }
 
     @Test
+    void saveMessageShouldReturnGeneratedId() {
+        MessageMapper messageMapper = mock(MessageMapper.class);
+        // MyBatis-Plus 的 @TableId(AUTO) 由 insert() 通过反射回填自增 id 到传入实体，
+        // 这里用 doAnswer 模拟该行为，验证 saveMessage 把回填的 id 返回给调用方
+        when(messageMapper.insert(any(Message.class))).thenAnswer(invocation -> {
+            Message saved = invocation.getArgument(0);
+            saved.setId(42L);
+            return 1;
+        });
+        ConversationServiceImpl service = new ConversationServiceImpl(messageMapper);
+
+        Long id = service.saveMessage(1L, "assistant", "压缩摘要内容", -2, "summary");
+
+        assertThat(id).isEqualTo(42L);
+    }
+
+    @Test
     void getRecentMessagesShouldFilterToUserAndSummaryOnly() {
         MessageMapper messageMapper = mock(MessageMapper.class);
         ConversationServiceImpl service = new ConversationServiceImpl(messageMapper);
@@ -101,5 +121,46 @@ class ConversationServiceImplTest {
         message.setStep(step);
         message.setType(type);
         return message;
+    }
+
+    @Test
+    void getInContextMessagesShouldFilterSameAsRecentButWithoutLimit() {
+        MessageMapper messageMapper = mock(MessageMapper.class);
+        ConversationServiceImpl service = new ConversationServiceImpl(messageMapper);
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+
+        service.getInContextMessages(1L);
+
+        ArgumentCaptor<LambdaQueryWrapper<Message>> wrapperCaptor = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(messageMapper).selectList(wrapperCaptor.capture());
+        String sqlSegment = wrapperCaptor.getValue().getSqlSegment();
+        assertThat(sqlSegment).contains("conversation_id =");
+        assertThat(sqlSegment).contains("type IN (");
+        assertThat(sqlSegment).doesNotContain("LIMIT");
+    }
+
+    @Test
+    void markMessagesCompressedShouldUpdateTypeForGivenIds() {
+        MessageMapper messageMapper = mock(MessageMapper.class);
+        ConversationServiceImpl service = new ConversationServiceImpl(messageMapper);
+
+        service.markMessagesCompressed(List.of(1L, 2L, 3L));
+
+        ArgumentCaptor<LambdaUpdateWrapper<Message>> wrapperCaptor =
+                ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(messageMapper).update(isNull(), wrapperCaptor.capture());
+        String sqlSegment = wrapperCaptor.getValue().getSqlSegment();
+        assertThat(sqlSegment).contains("id IN (");
+    }
+
+    @Test
+    void markMessagesCompressedShouldNoOpForEmptyOrNullList() {
+        MessageMapper messageMapper = mock(MessageMapper.class);
+        ConversationServiceImpl service = new ConversationServiceImpl(messageMapper);
+
+        service.markMessagesCompressed(List.of());
+        service.markMessagesCompressed(null);
+
+        verify(messageMapper, never()).update(any(), any());
     }
 }

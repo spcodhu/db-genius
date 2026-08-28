@@ -4,6 +4,7 @@ import com.dbgenius.common.exception.BusinessException;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.vo.CompressResultVO;
 import com.dbgenius.service.ConversationService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -13,13 +14,18 @@ import java.util.stream.Collectors;
 
 /**
  * 压缩编排默认实现：启动时收集所有 {@link ContextCompressor} Bean 建立策略表
- * （与 IntentHandlerRegistry 同模式），当前默认策略为 noop（空实现）。
+ * （与 IntentHandlerRegistry 同模式）。默认策略由
+ * {@code db-genius.context.auto-compress.strategy} 配置（默认 "summary"），
+ * 未命中配置策略或未提供任何 Bean 时回退到第一个可用策略。
  */
 @Service
 public class DefaultContextCompressService implements ContextCompressService {
 
     private final ConversationService conversationService;
     private final Map<String, ContextCompressor> compressors;
+
+    @Value("${db-genius.context.auto-compress.strategy:summary}")
+    private String defaultStrategy;
 
     public DefaultContextCompressService(ConversationService conversationService,
                                          List<ContextCompressor> compressorList) {
@@ -35,7 +41,8 @@ public class DefaultContextCompressService implements ContextCompressService {
             throw new BusinessException(404, "Conversation not found");
         }
         ContextCompressor compressor = compressors.getOrDefault(
-                NoopContextCompressor.CODE, compressors.values().iterator().next());
-        return compressor.compress(conversationId, options);
+                defaultStrategy, compressors.getOrDefault(
+                        NoopContextCompressor.CODE, compressors.values().iterator().next()));
+        return compressor.compress(conversationId, userId, options);
     }
 }

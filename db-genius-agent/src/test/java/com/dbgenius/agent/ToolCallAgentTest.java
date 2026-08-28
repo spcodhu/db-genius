@@ -6,6 +6,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -42,6 +44,14 @@ class ToolCallAgentTest {
         @Tool(description = "echo text")
         public String echo(@ToolParam(description = "text to echo") String text) {
             return "echo:" + text;
+        }
+    }
+
+    /** 测试用假工具：返回超大文本，用于验证工具输出截断安全网。 */
+    public static class BigOutputTool {
+        @Tool(description = "returns a huge blob of text")
+        public String bigOutput() {
+            return "X".repeat(6000);
         }
     }
 
@@ -199,6 +209,36 @@ class ToolCallAgentTest {
         assertThat(responses).hasSize(1);
         assertThat(responses.get(0).get("result").asText())
                 .contains("Re-emit the tool call with all required parameters");
+    }
+
+    @Test
+    void shouldTruncateOversizedToolOutputInMessageListButKeepFullPayloadInSink() throws Exception {
+        AssistantMessage assistant = AssistantMessage.builder()
+                .content("")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("call_1", "function", "bigOutput", "{}")))
+                .build();
+        when(reasoningChatModel.streamAggregated(any(), any())).thenReturn(responseOf(assistant));
+
+        ToolCallAgent agent = new ToolCallAgent("TestAgent", "system", null, 1,
+                reasoningChatModel, new BigOutputTool());
+        agent.setMessageSink(sink);
+        agent.setToolOutputMaxChars(100);
+        agent.setExecutor(Runnable::run);
+        agent.runStream("give me a huge blob");
+
+        // messageSink 落库使用未截断的原始结果，保留完整审计轨迹
+        ArgumentCaptor<String> responsesCaptor = ArgumentCaptor.forClass(String.class);
+        verify(sink).onToolResponses(org.mockito.ArgumentMatchers.eq(1), responsesCaptor.capture());
+        JsonNode responses = objectMapper.readTree(responsesCaptor.getValue());
+        assertThat(responses.get(0).get("result").asText().length()).isGreaterThan(6000);
+
+        // messageList（下一次发给模型的 prompt）中的版本已被截断
+        List<Message> messageList = agent.getMessageList();
+        Message last = messageList.get(messageList.size() - 1);
+        assertThat(last).isInstanceOf(ToolResponseMessage.class);
+        String truncatedData = ((ToolResponseMessage) last).getResponses().get(0).responseData();
+        assertThat(truncatedData.length()).isLessThan(500);
+        assertThat(truncatedData).contains("已省略");
     }
 
     private ChatResponse responseOf(AssistantMessage assistant) {

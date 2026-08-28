@@ -11,7 +11,9 @@ import org.springframework.stereotype.Service;
  * 自动压缩钩子：下一轮会话开始前（IntentRouter 加载历史之后、意图分类之前）检查
  * 上下文占用，达到阈值即触发压缩链。
  *
- * <p>本轮压缩为 Noop 空实现，且默认关闭（db-genius.context.auto-compress.enabled=false）。
+ * <p>实际压缩策略由 {@code db-genius.context.auto-compress.strategy} 决定（默认
+ * {@link SummaryContextCompressor}，可配置回退为 {@link NoopContextCompressor}），本类只负责
+ * "是否需要压缩"的判断，默认关闭（db-genius.context.auto-compress.enabled=false）。
  * 选择"下一轮开始前"而非轮末异步：确定性强、无流式中途竞态、压缩后的历史对本轮立即生效。
  */
 @Slf4j

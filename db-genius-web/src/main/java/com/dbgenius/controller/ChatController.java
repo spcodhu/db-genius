@@ -61,7 +61,8 @@ public class ChatController {
     }
 
     /**
-     * 主动压缩会话上下文。当前为空实现（Noop），返回 compressed=false 与说明文案。
+     * 主动压缩会话上下文。默认策略为 LLM 摘要（{@code SummaryContextCompressor}），
+     * 可通过 db-genius.context.auto-compress.strategy=noop 一键回退为空实现。
      */
     @PostMapping("/conversations/{id}/compress")
     public R<CompressResultVO> compressConversation(@PathVariable Long id,

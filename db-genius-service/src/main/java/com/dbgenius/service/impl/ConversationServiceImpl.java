@@ -48,12 +48,12 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
     }
 
     @Override
-    public void saveMessage(Long conversationId, String role, String content, Integer step, String type) {
-        saveMessage(conversationId, role, content, step, type, null, null);
+    public Long saveMessage(Long conversationId, String role, String content, Integer step, String type) {
+        return saveMessage(conversationId, role, content, step, type, null, null);
     }
 
     @Override
-    public void saveMessage(Long conversationId, String role, String content, Integer step, String type,
+    public Long saveMessage(Long conversationId, String role, String content, Integer step, String type,
                             String reasoningContent, String toolCalls) {
         Message message = new Message();
         message.setConversationId(conversationId);
@@ -64,6 +64,7 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
         message.setReasoningContent(reasoningContent);
         message.setToolCalls(toolCalls);
         messageMapper.insert(message);
+        return message.getId();
     }
 
     @Override
@@ -98,6 +99,26 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
                 .last("LIMIT " + limit));
         // 按时间正序返回，便于构造上下文
         return messages.reversed();
+    }
+
+    @Override
+    public List<Message> getInContextMessages(Long conversationId) {
+        // 与 getRecentMessages 相同的过滤条件，但不加 LIMIT：用于上下文压缩策略
+        // 判断全量待压缩范围，避免与"仅取最近 N 条"的逻辑重复实现两套过滤条件。
+        return messageMapper.selectList(new LambdaQueryWrapper<Message>()
+                .eq(Message::getConversationId, conversationId)
+                .and(w -> w.in(Message::getType, "user", "summary").or().isNull(Message::getType))
+                .orderByAsc(Message::getCreatedAt));
+    }
+
+    @Override
+    public void markMessagesCompressed(List<Long> messageIds) {
+        if (messageIds == null || messageIds.isEmpty()) {
+            return;
+        }
+        messageMapper.update(null, new LambdaUpdateWrapper<Message>()
+                .in(Message::getId, messageIds)
+                .set(Message::getType, "compressed"));
     }
 
     private ConversationVO toVO(Conversation conversation) {
