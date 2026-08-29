@@ -16,6 +16,7 @@ import org.springframework.ai.chat.prompt.Prompt;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -82,7 +83,7 @@ class StepHistoryCondenserTest {
         List<Message> messageList = new ArrayList<>(List.of(new UserMessage("task")));
         List<Message> snapshot = new ArrayList<>(messageList);
 
-        boolean condensed = condenser.condenseIfNeeded(messageList, 1, "system", mock(ChatModel.class), 1000);
+        boolean condensed = condenser.condenseIfNeeded(messageList, 1, "system", mock(ChatModel.class), 1000, Locale.SIMPLIFIED_CHINESE);
 
         assertThat(condensed).isFalse();
         assertThat(messageList).isEqualTo(snapshot);
@@ -94,7 +95,7 @@ class StepHistoryCondenserTest {
         List<Message> messageList = new ArrayList<>(List.of(new UserMessage("task")));
         messageList.addAll(stepWithToolCall("call_1", "echo", "short"));
 
-        boolean condensed = condenser.condenseIfNeeded(messageList, 1, "system", mock(ChatModel.class), 1_000_000);
+        boolean condensed = condenser.condenseIfNeeded(messageList, 1, "system", mock(ChatModel.class), 1_000_000, Locale.SIMPLIFIED_CHINESE);
 
         assertThat(condensed).isFalse();
     }
@@ -115,7 +116,7 @@ class StepHistoryCondenserTest {
         List<Message> beforeTurnSnapshot = new ArrayList<>(messageList.subList(0, turnStartIndex));
 
         boolean condensed = condenser.condenseIfNeeded(messageList, turnStartIndex, "system",
-                modelReturning("## 进展总结\n\n已完成 step1、step2。"), 1000);
+                modelReturning("## 进展总结\n\n已完成 step1、step2。"), 1000, Locale.SIMPLIFIED_CHINESE);
 
         assertThat(condensed).isTrue();
         // turnStartIndex 之前的消息完全不变
@@ -143,7 +144,7 @@ class StepHistoryCondenserTest {
         List<Message> snapshot = new ArrayList<>(messageList);
 
         boolean condensed = condenser.condenseIfNeeded(messageList, turnStartIndex, "system",
-                mock(ChatModel.class), 1000);
+                mock(ChatModel.class), 1000, Locale.SIMPLIFIED_CHINESE);
 
         assertThat(condensed).isFalse();
         assertThat(messageList).isEqualTo(snapshot);
@@ -161,7 +162,7 @@ class StepHistoryCondenserTest {
         ChatModel failingModel = mock(ChatModel.class);
         when(failingModel.call(any(Prompt.class))).thenThrow(new RuntimeException("boom"));
 
-        boolean condensed = condenser.condenseIfNeeded(messageList, turnStartIndex, "system", failingModel, 1000);
+        boolean condensed = condenser.condenseIfNeeded(messageList, turnStartIndex, "system", failingModel, 1000, Locale.SIMPLIFIED_CHINESE);
 
         assertThat(condensed).isFalse();
         assertThat(messageList).isEqualTo(snapshot);

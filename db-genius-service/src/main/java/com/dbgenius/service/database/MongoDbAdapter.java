@@ -1,6 +1,7 @@
 package com.dbgenius.service.database;
 
 import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
 import com.dbgenius.common.util.SqlSafetyGuard;
 import com.dbgenius.model.dto.DbConfigRequest;
 import com.dbgenius.model.entity.DbConfig;
@@ -248,13 +249,13 @@ public class MongoDbAdapter implements DatabaseAdapter {
     @Override
     public void validateRequest(DbConfigRequest request) {
         if (!hasText(request.getHost())) {
-            throw new BusinessException(400, "host is required for MongoDB");
+            throw new BusinessException(ErrorCode.DB_FIELD_REQUIRED, "host", getType().getDisplayName());
         }
         if (request.getPort() == null) {
-            throw new BusinessException(400, "port is required for MongoDB");
+            throw new BusinessException(ErrorCode.DB_FIELD_REQUIRED, "port", getType().getDisplayName());
         }
         if (!hasText(request.getDbName())) {
-            throw new BusinessException(400, "dbName is required for MongoDB");
+            throw new BusinessException(ErrorCode.DB_FIELD_REQUIRED, "dbName", getType().getDisplayName());
         }
     }
 

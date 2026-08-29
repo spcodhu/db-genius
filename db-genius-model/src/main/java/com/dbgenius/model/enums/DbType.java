@@ -1,6 +1,7 @@
 package com.dbgenius.model.enums;
 
 import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
@@ -77,9 +78,7 @@ public enum DbType {
                 return type;
             }
         }
-        throw new BusinessException(400, "Unsupported database type: " + code
-                + ". Supported types: mysql, postgresql, mongodb, mariadb, tidb, doris, "
-                + "starrocks, oceanbase, oracle, sqlserver");
+        throw new BusinessException(ErrorCode.UNSUPPORTED_DB_TYPE, code);
     }
 
     /**

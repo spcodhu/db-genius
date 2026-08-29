@@ -10,6 +10,9 @@ import com.dbgenius.agent.tool.DbCompareTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
 import com.dbgenius.agent.usage.TokenUsageAccumulator;
+import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
+import com.dbgenius.common.i18n.MessageService;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.entity.DbConfig;
@@ -35,6 +38,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
@@ -55,6 +59,7 @@ public class CompareHandler implements IntentHandler {
     private final SqlExecuteTool sqlExecuteTool;
     private final TerminateTool terminateTool;
     private final StepHistoryCondenser stepHistoryCondenser;
+    private final MessageService messageService;
 
     @Value("${db-genius.context.tool-output-max-chars:4000}")
     private int toolOutputMaxChars;
@@ -69,9 +74,10 @@ public class CompareHandler implements IntentHandler {
     }
 
     @Override
-    @TrialDeny("试用版暂不支持数据库对比")
+    @TrialDeny(ErrorCode.TRIAL_DB_COMPARE)
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
-                       IntentClassificationResult classification, Long userId, TokenUsageAccumulator tokenUsage) {
+                       IntentClassificationResult classification, Long userId,
+                       TokenUsageAccumulator tokenUsage, Locale locale) {
         Long preDbConfigId = request.getPreDbConfigId();
         Long testDbConfigId = request.getTestDbConfigId();
 
@@ -91,7 +97,7 @@ public class CompareHandler implements IntentHandler {
         conversationService.saveMessage(conversation.getId(), "user", message, null, "user");
 
         if (preDbConfigId == null || testDbConfigId == null) {
-            throw new IllegalArgumentException("数据库对比需要同时提供 preDbConfigId 和 testDbConfigId");
+            throw new BusinessException(ErrorCode.COMPARE_NO_DB_CONFIG);
         }
 
         dbConfigService.validateConfigForChat(userId, preDbConfigId);
@@ -109,7 +115,9 @@ public class CompareHandler implements IntentHandler {
                 userModelConfigService.getActiveConfig(userId), tokenUsage);
 
         DbCompareAgent agent = new DbCompareAgent(
-                session.reasoningModel(), dbCompareTool, sqlExecuteTool, terminateTool, preDbDoc, testDbDoc);
+                session.reasoningModel(), dbCompareTool, sqlExecuteTool, terminateTool,
+                preDbDoc, testDbDoc, locale);
+        agent.setMessageService(messageService);
         agent.setHistoryMessages(historyMessages);
         agent.setExecutor(chatTaskExecutor);
         agent.setSummaryCallback(markdown ->

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
 import com.dbgenius.mapper.ConversationMapper;
 import com.dbgenius.mapper.MessageMapper;
 import com.dbgenius.model.entity.Conversation;
@@ -71,7 +72,7 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
     public void deleteConversation(Long userId, Long conversationId) {
         Conversation conversation = getById(conversationId);
         if (conversation == null || !conversation.getUserId().equals(userId)) {
-            throw new BusinessException(404, "Conversation not found");
+            throw new BusinessException(ErrorCode.CONVERSATION_NOT_FOUND);
         }
         messageMapper.delete(new LambdaQueryWrapper<Message>()
                 .eq(Message::getConversationId, conversationId));

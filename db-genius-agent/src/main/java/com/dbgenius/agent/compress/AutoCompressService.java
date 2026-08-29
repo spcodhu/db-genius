@@ -7,6 +7,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.Locale;
+
 /**
  * 自动压缩钩子：下一轮会话开始前（IntentRouter 加载历史之后、意图分类之前）检查
  * 上下文占用，达到阈值即触发压缩链。
@@ -41,8 +43,10 @@ public class AutoCompressService {
 
     /**
      * 占用达到阈值时压缩；任何异常静默降级，不影响正常会话流程。
+     *
+     * @param locale 本轮请求的语言环境（本方法跑在异步线程，ThreadLocal 已失效，必须显式传入）
      */
-    public void compressIfNeeded(Long conversationId, Long userId) {
+    public void compressIfNeeded(Long conversationId, Long userId, Locale locale) {
         if (!enabled || conversationId == null) {
             return;
         }
@@ -58,7 +62,7 @@ public class AutoCompressService {
             }
             log.info("[AutoCompress] conversation {} context {}/{} >= {}, compressing",
                     conversationId, contextTokens, contextWindow, threshold);
-            compressService.compress(userId, conversationId, null);
+            compressService.compress(userId, conversationId, null, locale);
         } catch (Exception e) {
             log.warn("[AutoCompress] skipped for conversation {}: {}", conversationId, e.getMessage());
         }

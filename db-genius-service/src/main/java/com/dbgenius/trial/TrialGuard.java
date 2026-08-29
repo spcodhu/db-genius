@@ -1,5 +1,6 @@
 package com.dbgenius.trial;
 
+import com.dbgenius.common.exception.ErrorCode;
 import com.dbgenius.common.exception.TrialBusinessException;
 import com.dbgenius.model.entity.DbConfig;
 import lombok.RequiredArgsConstructor;
@@ -31,11 +32,11 @@ public class TrialGuard {
     }
 
     /**
-     * 试用版下直接拒绝，使用自定义提示
+     * 试用版下直接拒绝，使用指定错误码（文案按请求 locale 解析）
      */
-    public void denyIfTrial(String message) {
+    public void denyIfTrial(ErrorCode errorCode) {
         if (isTrialMode()) {
-            throw new TrialBusinessException(message);
+            throw new TrialBusinessException(errorCode);
         }
     }
 
@@ -44,7 +45,7 @@ public class TrialGuard {
      */
     public void denyIfTrialBuiltin(DbConfig config) {
         if (isTrialMode() && config != null && Boolean.TRUE.equals(config.getBuiltin())) {
-            throw new TrialBusinessException("试用版暂不支持修改内置数据库配置");
+            throw new TrialBusinessException(ErrorCode.TRIAL_BUILTIN_MODIFY);
         }
     }
 

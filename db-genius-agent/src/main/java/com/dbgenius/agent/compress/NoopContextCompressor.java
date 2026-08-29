@@ -1,10 +1,13 @@
 package com.dbgenius.agent.compress;
 
+import com.dbgenius.common.i18n.MessageService;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.vo.CompressResultVO;
 import com.dbgenius.service.ConversationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+
+import java.util.Locale;
 
 /**
  * 空实现压缩策略：不执行任何压缩，直接返回 compressed=false。
@@ -20,6 +23,7 @@ public class NoopContextCompressor implements ContextCompressor {
     public static final String CODE = "noop";
 
     private final ConversationService conversationService;
+    private final MessageService messageService;
 
     @Override
     public String strategyCode() {
@@ -27,7 +31,7 @@ public class NoopContextCompressor implements ContextCompressor {
     }
 
     @Override
-    public CompressResultVO compress(Long conversationId, Long userId, CompressOptions options) {
+    public CompressResultVO compress(Long conversationId, Long userId, CompressOptions options, Locale locale) {
         Conversation conversation = conversationService.getById(conversationId);
         Integer beforeTokens = conversation != null ? conversation.getContextTokens() : null;
         return CompressResultVO.builder()
@@ -36,7 +40,7 @@ public class NoopContextCompressor implements ContextCompressor {
                 .beforeTokens(beforeTokens)
                 .afterTokens(beforeTokens)
                 .summaryMessageId(null)
-                .message("当前压缩策略为 noop，未执行任何压缩")
+                .message(messageService.get("compress.noop.message", locale))
                 .build();
     }
 }

@@ -9,6 +9,9 @@ import com.dbgenius.agent.compress.StepHistoryCondenser;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
 import com.dbgenius.agent.usage.TokenUsageAccumulator;
+import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
+import com.dbgenius.common.i18n.MessageService;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.entity.Message;
@@ -33,6 +36,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
@@ -52,6 +56,7 @@ public class SqlQueryHandler implements IntentHandler {
     private final SqlExecuteTool sqlExecuteTool;
     private final TerminateTool terminateTool;
     private final StepHistoryCondenser stepHistoryCondenser;
+    private final MessageService messageService;
 
     @Value("${db-genius.context.tool-output-max-chars:4000}")
     private int toolOutputMaxChars;
@@ -67,7 +72,8 @@ public class SqlQueryHandler implements IntentHandler {
 
     @Override
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
-                       IntentClassificationResult classification, Long userId, TokenUsageAccumulator tokenUsage) {
+                       IntentClassificationResult classification, Long userId,
+                       TokenUsageAccumulator tokenUsage, Locale locale) {
         List<Long> dbConfigIds = request.getDbConfigIds();
 
         // 先建会话并下发 conversation 事件、落库本轮用户消息，保证即使后续前置校验失败，
@@ -82,7 +88,7 @@ public class SqlQueryHandler implements IntentHandler {
         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
         if (dbConfigIds == null || dbConfigIds.isEmpty()) {
-            throw new IllegalArgumentException("SQL 查询需要至少选择一个数据库配置");
+            throw new BusinessException(ErrorCode.SQL_QUERY_NO_DB_CONFIG);
         }
 
         validateDbConfigs(userId, dbConfigIds);
@@ -93,7 +99,8 @@ public class SqlQueryHandler implements IntentHandler {
                 userModelConfigService.getActiveConfig(userId), tokenUsage);
 
         DbSqlAgent agent = new DbSqlAgent(session.reasoningModel(), sqlExecuteTool, terminateTool,
-                dbDoc, dialectContext);
+                dbDoc, dialectContext, locale);
+        agent.setMessageService(messageService);
         agent.setHistoryMessages(historyMessages);
         agent.setExecutor(chatTaskExecutor);
         agent.setSummaryCallback(markdown ->

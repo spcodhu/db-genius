@@ -1,6 +1,7 @@
 package com.dbgenius.service.database;
 
 import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
 import com.dbgenius.model.entity.DbConfig;
 import com.dbgenius.model.metadata.ColumnMetadata;
 import com.dbgenius.model.metadata.IndexMetadata;
@@ -205,7 +206,7 @@ public abstract class AbstractJdbcAdapter implements DatabaseAdapter {
     protected void requireNonBlank(Object value, String fieldName) {
         boolean empty = value == null || (value instanceof String s && s.isBlank());
         if (empty) {
-            throw new BusinessException(400, fieldName + " is required for " + getType().getDisplayName());
+            throw new BusinessException(ErrorCode.DB_FIELD_REQUIRED, fieldName, getType().getDisplayName());
         }
     }
 

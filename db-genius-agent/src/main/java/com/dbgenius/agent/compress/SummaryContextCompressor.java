@@ -2,6 +2,8 @@ package com.dbgenius.agent.compress;
 
 import com.dbgenius.agent.ChatModelFactory;
 import com.dbgenius.agent.ChatModelSession;
+import com.dbgenius.agent.prompt.PromptTemplateLoader;
+import com.dbgenius.common.i18n.MessageService;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.entity.Message;
 import com.dbgenius.model.entity.UserModelConfig;
@@ -14,6 +16,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * LLM 摘要压缩策略：保留最近 {@code keepLastMessages} 条"可入上下文"的消息原样不动，
@@ -24,6 +28,9 @@ import java.util.List;
  *
  * <p>Token 估算基于 {@link TokenEstimator}（近似值，非计费口径），仅用于
  * {@link CompressResultVO#getBeforeTokens()}/{@link CompressResultVO#getAfterTokens()} 展示。
+ *
+ * <p>摘要 prompt 与结果文案均按调用方传入的 locale 本地化（prompt 模板走
+ * {@link PromptTemplateLoader}，用户可见文案走 {@link MessageService}）。</p>
  */
 @Slf4j
 @Component
@@ -35,26 +42,15 @@ public class SummaryContextCompressor implements ContextCompressor {
     /** 压缩摘要消息的 step 取值：区别于 ToolCallAgent 任务总结使用的 step=-1，便于审计区分两类"summary"消息 */
     private static final int SUMMARY_STEP = -2;
 
+    private static final String PROMPT_TEMPLATE = "summary-compressor";
+
     private final ConversationService conversationService;
     private final UserModelConfigService userModelConfigService;
     private final ChatModelFactory chatModelFactory;
+    private final MessageService messageService;
 
     @Value("${db-genius.context.auto-compress.keep-last-messages:6}")
     private int keepLastMessages;
-
-    private static final String SUMMARY_SYSTEM_PROMPT = """
-            你是一个专注于压缩对话历史的助手。你会看到一段数据库智能助手与用户的历史对话
-            （可能已包含此前生成的摘要），请把它压缩为一段简洁但信息完整的结构化摘要，供后续对话继续使用。
-
-            摘要必须包含以下部分（没有对应内容的部分可省略，但绝不能虚构未出现过的信息）：
-            1. 用户目标/任务描述
-            2. 关键结论与已确认事实（涉及的数据库/表名、已执行过的操作及结果摘要——只保留结论性数据，
-               如行数/关键数值，不要罗列整张结果表）
-            3. 已知错误与规避方式（如果对话中出现过失败的操作或报错，必须保留，不要抹除，这对避免重复犯错很重要）
-            4. 尚待处理事项/用户尚未回答的问题
-
-            不确定的信息标注"未知"，不要编造。直接输出摘要正文（Markdown），不要输出多余的说明文字或前后缀。
-            """;
 
     @Override
     public String strategyCode() {
@@ -62,11 +58,11 @@ public class SummaryContextCompressor implements ContextCompressor {
     }
 
     @Override
-    public CompressResultVO compress(Long conversationId, Long userId, CompressOptions options) {
+    public CompressResultVO compress(Long conversationId, Long userId, CompressOptions options, Locale locale) {
         List<Message> inContext = conversationService.getInContextMessages(conversationId);
         if (inContext.size() <= keepLastMessages) {
             return noopResult(conversationId,
-                    "消息数量（" + inContext.size() + "）未超过保留阈值（" + keepLastMessages + "），无需压缩");
+                    messageService.get("compress.summary.skip", locale, inContext.size(), keepLastMessages));
         }
 
         int splitIndex = inContext.size() - keepLastMessages;
@@ -76,11 +72,12 @@ public class SummaryContextCompressor implements ContextCompressor {
 
         String summaryText;
         try {
-            summaryText = summarize(userId, toSummarize, options);
+            summaryText = summarize(userId, toSummarize, options, locale);
         } catch (Exception e) {
             log.warn("[SummaryContextCompressor] LLM summarization failed for conversation {}: {}",
                     conversationId, e.getMessage());
-            return noopResult(conversationId, "压缩失败（模型摘要调用异常，已跳过本次压缩）：" + e.getMessage());
+            return noopResult(conversationId,
+                    messageService.get("compress.summary.failed", locale, e.getMessage()));
         }
 
         Long summaryMessageId = conversationService.saveMessage(
@@ -97,30 +94,43 @@ public class SummaryContextCompressor implements ContextCompressor {
                 .beforeTokens(beforeTokens)
                 .afterTokens(afterTokens)
                 .summaryMessageId(summaryMessageId)
-                .message("已将 " + toSummarize.size() + " 条历史消息压缩为摘要，预计减少约 "
-                        + Math.max(0, beforeTokens - afterTokens) + " tokens（估算值，非计费口径）")
+                .message(messageService.get("compress.summary.done", locale,
+                        toSummarize.size(), Math.max(0, beforeTokens - afterTokens)))
                 .build();
     }
 
-    private String summarize(Long userId, List<Message> toSummarize, CompressOptions options) {
+    private String summarize(Long userId, List<Message> toSummarize, CompressOptions options, Locale locale) {
         UserModelConfig config = userModelConfigService.getActiveConfig(userId);
         ChatModelSession session = chatModelFactory.createSession(config);
 
+        boolean zh = "zh_CN".equals(PromptTemplateLoader.resolveVariant(PROMPT_TEMPLATE, locale));
         StringBuilder transcript = new StringBuilder();
         for (Message message : toSummarize) {
-            String role = "summary".equals(message.getType()) ? "此前摘要" : describeRole(message.getRole());
+            String role = "summary".equals(message.getType())
+                    ? (zh ? "此前摘要" : "previous summary")
+                    : describeRole(message.getRole(), zh);
             transcript.append("[").append(role).append("] ").append(message.getContent()).append("\n\n");
         }
 
-        StringBuilder userPrompt = new StringBuilder("以下是需要压缩的历史对话内容：\n\n").append(transcript);
-        if (options != null && options.targetTokens() != null) {
-            userPrompt.append("\n请尽量将摘要控制在约 ").append(options.targetTokens())
-                    .append(" token 以内（软性要求，无法保证时以信息完整为先）。");
+        String[] sections = PromptTemplateLoader.splitSections(
+                PromptTemplateLoader.load(PROMPT_TEMPLATE, locale));
+        String userTemplate = sections.length > 1 ? sections[1] : "{transcript}";
+        // 未指定目标 token 数时，剔除含 {targetTokens} 的软性要求行
+        String targetTokens = "";
+        if (options == null || options.targetTokens() == null) {
+            userTemplate = String.join("\n", userTemplate.lines()
+                    .filter(line -> !line.contains("{targetTokens}"))
+                    .toList());
+        } else {
+            targetTokens = String.valueOf(options.targetTokens());
         }
+        String userPrompt = PromptTemplateLoader.render(userTemplate, Map.of(
+                "transcript", transcript.toString(),
+                "targetTokens", targetTokens));
 
         String content = session.chatClient().prompt()
-                .system(SUMMARY_SYSTEM_PROMPT)
-                .user(userPrompt.toString())
+                .system(PromptTemplateLoader.withOutputLanguage(sections[0], locale))
+                .user(userPrompt.strip())
                 .call()
                 .content();
         if (content == null || content.isBlank()) {
@@ -129,8 +139,11 @@ public class SummaryContextCompressor implements ContextCompressor {
         return content;
     }
 
-    private String describeRole(String role) {
-        return "user".equals(role) ? "用户" : "助手";
+    private String describeRole(String role, boolean zh) {
+        if ("user".equals(role)) {
+            return zh ? "用户" : "user";
+        }
+        return zh ? "助手" : "assistant";
     }
 
     private int estimateTokens(List<Message> messages) {

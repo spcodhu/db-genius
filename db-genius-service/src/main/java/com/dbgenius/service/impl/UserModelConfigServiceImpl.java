@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
 import com.dbgenius.common.util.AesUtil;
 import com.dbgenius.mapper.UserModelConfigMapper;
 import com.dbgenius.model.dto.UserModelConfigRequest;
@@ -61,7 +62,7 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
 
     @Override
     @Transactional
-    @TrialDeny("试用版暂不支持新增模型配置")
+    @TrialDeny(ErrorCode.TRIAL_MODEL_CONFIG_CREATE)
     public UserModelConfigVO createConfig(Long userId, UserModelConfigRequest request) {
         UserModelConfig config = new UserModelConfig();
         config.setUserId(userId);
@@ -91,7 +92,7 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
 
     @Override
     @Transactional
-    @TrialDeny("试用版暂不支持编辑模型配置")
+    @TrialDeny(ErrorCode.TRIAL_MODEL_CONFIG_UPDATE)
     public UserModelConfigVO updateConfig(Long userId, Long configId, UserModelConfigRequest request) {
         UserModelConfig config = getOwnedConfig(userId, configId);
         config.setProviderCode(request.getProviderCode());
@@ -117,11 +118,11 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
 
     @Override
     @Transactional
-    @TrialDeny("试用版暂不支持删除模型配置")
+    @TrialDeny(ErrorCode.TRIAL_MODEL_CONFIG_DELETE)
     public void deleteConfig(Long userId, Long configId) {
         UserModelConfig config = getOwnedConfig(userId, configId);
         if (Boolean.TRUE.equals(config.getIsDefault())) {
-            throw new BusinessException("不能删除当前默认配置，请先将其他配置设为默认");
+            throw new BusinessException(ErrorCode.CANNOT_DELETE_DEFAULT_CONFIG);
         }
         removeById(configId);
         log.info("User {} deleted model config id={}", userId, configId);
@@ -146,11 +147,11 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
 
     @Override
     @Transactional
-    @TrialDeny("试用版暂不支持切换默认模型配置")
+    @TrialDeny(ErrorCode.TRIAL_MODEL_CONFIG_SET_DEFAULT)
     public void setDefault(Long userId, Long configId) {
         UserModelConfig config = getOwnedConfig(userId, configId);
         if (config.getStatus() != ModelConfigStatus.ENABLED) {
-            throw new BusinessException("已禁用的配置不能设为默认");
+            throw new BusinessException(ErrorCode.DISABLED_CONFIG_CANNOT_BE_DEFAULT);
         }
         // 先取消用户所有默认（set 仅存在于 LambdaUpdateWrapper）
         update(new LambdaUpdateWrapper<UserModelConfig>()
@@ -183,7 +184,7 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
         if (config == null) {
             // 用户没有自定义配置：fallback 到系统级配置
             if (defaultApiKey == null || defaultApiKey.isBlank()) {
-                throw new BusinessException("尚未配置 AI 模型。请在设置中添加模型配置，或联系管理员配置系统默认 API Key。");
+                throw new BusinessException(ErrorCode.NO_MODEL_CONFIGURED);
             }
             log.info("User {} has no model config, falling back to system default", userId);
             return buildFallbackConfig(userId);
@@ -193,7 +194,7 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
     }
 
     @Override
-    @TrialDeny("试用版暂不支持远程获取上下文窗口")
+    @TrialDeny(ErrorCode.TRIAL_CONTEXT_WINDOW_LOOKUP)
     public ContextWindowLookupVO lookupContextWindow(Long userId, Long configId) {
         UserModelConfig config = getOwnedConfig(userId, configId);
         // fallback/明文场景与 ChatModelFactory.resolveApiKey 保持一致
@@ -218,7 +219,7 @@ public class UserModelConfigServiceImpl extends ServiceImpl<UserModelConfigMappe
     private UserModelConfig getOwnedConfig(Long userId, Long configId) {
         UserModelConfig config = getById(configId);
         if (config == null || !config.getUserId().equals(userId)) {
-            throw new BusinessException(404, "模型配置不存在");
+            throw new BusinessException(ErrorCode.MODEL_CONFIG_NOT_FOUND);
         }
         return config;
     }

@@ -27,6 +27,7 @@ import reactor.core.Disposable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -84,10 +85,12 @@ public class SimpleChatHandler implements IntentHandler {
      * @param request        统一聊天请求（含消息、会话 ID 等）
      * @param classification 意图分类结果（此处已确定为 SIMPLE_CHAT）
      * @param userId         当前用户 ID，用于会话归属校验
+     * @param locale         本轮请求的语言环境（异步线程中 LocaleContextHolder 已失效，显式传入）
      */
     @Override
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
-                       IntentClassificationResult classification, Long userId, TokenUsageAccumulator tokenUsage) {
+                       IntentClassificationResult classification, Long userId,
+                       TokenUsageAccumulator tokenUsage, Locale locale) {
         ConversationVO conversation = getOrCreateConversation(userId, request);
         sendEvent(emitter, SseEvent.of(taskId, 0, "conversation", conversation.getId()));
 

@@ -1,5 +1,6 @@
 package com.dbgenius.agent.compress;
 
+import com.dbgenius.agent.prompt.PromptTemplateLoader;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -14,6 +15,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * 单次 Agent 运行内（{@code ToolCallAgent} 多步 ReAct 循环）的上下文压缩：当 {@code messageList}
@@ -39,18 +42,7 @@ public class StepHistoryCondenser {
     @Value("${db-genius.context.in-run-compress.keep-last-steps:4}")
     private int keepLastSteps;
 
-    private static final String CONDENSE_SYSTEM_PROMPT = """
-            你是一个专注于压缩 Agent 任务执行记录的助手。你会看到一个数据库智能助手在完成任务过程中
-            较早的若干步骤（模型的思考/工具调用/工具返回结果），请把它们压缩为一段简洁的进展总结，
-            供 Agent 在后续步骤中继续参考。
-
-            总结须包含（没有对应内容可省略，不要虚构未出现过的信息）：
-            1. 已完成的关键操作及结果（如已执行的 SQL、已确认的表结构、已处理的文件等，只保留结论性数据）
-            2. 已知错误与规避方式（如果出现过失败的操作或报错，必须保留，避免后续重复犯错）
-            3. 当前任务的整体进展（还差哪些步骤未完成）
-
-            直接输出总结正文（Markdown），不要输出多余的说明文字或前后缀。
-            """;
+    private static final String PROMPT_TEMPLATE = "step-condenser";
 
     /**
      * 若已开启且估算 token 超过 {@code contextWindow * threshold}，压缩
@@ -61,10 +53,11 @@ public class StepHistoryCondenser {
      * @param systemPrompt Agent 的系统提示词（计入 token 估算）
      * @param chatModel    用于生成摘要的模型（复用 Agent 已持有的 ReasoningChatModel 即可）
      * @param contextWindow 当前模型的上下文窗口大小，未知（null 或 &lt;=0）时跳过
+     * @param locale       本轮请求的语言环境，决定压缩 prompt 模板语言
      * @return true 表示本次执行了压缩
      */
     public boolean condenseIfNeeded(List<Message> messageList, int turnStartIndex, String systemPrompt,
-                                    ChatModel chatModel, Integer contextWindow) {
+                                    ChatModel chatModel, Integer contextWindow, Locale locale) {
         if (!enabled || contextWindow == null || contextWindow <= 0) {
             return false;
         }
@@ -92,7 +85,7 @@ public class StepHistoryCondenser {
 
         String summaryText;
         try {
-            summaryText = condense(chatModel, flattenedToCondense);
+            summaryText = condense(chatModel, flattenedToCondense, locale);
         } catch (Exception e) {
             log.warn("[StepHistoryCondenser] in-run condensation failed, skip this round: {}", e.getMessage());
             return false;
@@ -133,15 +126,20 @@ public class StepHistoryCondenser {
         return groups;
     }
 
-    private String condense(ChatModel chatModel, List<Message> messages) {
+    private String condense(ChatModel chatModel, List<Message> messages, Locale locale) {
         StringBuilder transcript = new StringBuilder();
         for (Message message : messages) {
             transcript.append(formatForTranscript(message)).append("\n\n");
         }
 
+        String[] sections = PromptTemplateLoader.splitSections(
+                PromptTemplateLoader.load(PROMPT_TEMPLATE, locale));
+        String userPrompt = sections.length > 1
+                ? PromptTemplateLoader.render(sections[1], Map.of("transcript", transcript.toString()))
+                : transcript.toString();
         List<Message> promptMessages = List.of(
-                new SystemMessage(CONDENSE_SYSTEM_PROMPT),
-                new UserMessage("以下是需要压缩的任务执行步骤记录：\n\n" + transcript));
+                new SystemMessage(PromptTemplateLoader.withOutputLanguage(sections[0], locale)),
+                new UserMessage(userPrompt));
         ChatResponse response = chatModel.call(new Prompt(promptMessages));
         String content = response != null && response.getResult() != null
                 ? response.getResult().getOutput().getText() : null;

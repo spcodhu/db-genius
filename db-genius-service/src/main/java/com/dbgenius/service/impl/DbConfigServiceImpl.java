@@ -3,6 +3,7 @@ package com.dbgenius.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
 import com.dbgenius.common.util.AesUtil;
 import com.dbgenius.mapper.DbConfigMapper;
 import com.dbgenius.model.dto.DbConfigRequest;
@@ -42,7 +43,7 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     private DatabaseAdapterRegistry databaseAdapterRegistry;
 
     @Override
-    @TrialDeny("试用版暂不支持新增数据库配置")
+    @TrialDeny(ErrorCode.TRIAL_DB_CONFIG_CREATE)
     public DbConfigVO createConfig(Long userId, DbConfigRequest request) {
         // 归一化数据库类型（null/空白回退 mysql，不识别直接 400），具体必填项由适配器按类型校验
         DbType type = DbType.fromCode(request.getDbType());
@@ -146,7 +147,7 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     public String getDocContent(Long userId, Long configId) {
         DbConfig config = getConfigEntity(userId, configId);
         if (config.getDocContent() == null || config.getDocContent().isBlank()) {
-            throw new BusinessException("Documentation not generated yet. Please generate it first.");
+            throw new BusinessException(ErrorCode.DOC_NOT_GENERATED);
         }
         return config.getDocContent();
     }
@@ -218,19 +219,19 @@ public class DbConfigServiceImpl extends ServiceImpl<DbConfigMapper, DbConfig> i
     public void validateConfigForChat(Long userId, Long configId) {
         DbConfig config = getConfigEntity(userId, configId);
         if (config.getStatus() != DbConfigStatus.CONNECTED) {
-            String msg = switch (config.getStatus()) {
-                case VERIFYING -> "数据库配置正在验证中，请稍后重试";
-                case FAILED -> "数据库配置连接失败，请检查配置后重试";
+            ErrorCode errorCode = switch (config.getStatus()) {
+                case VERIFYING -> ErrorCode.DB_CONFIG_VERIFYING;
+                case FAILED -> ErrorCode.DB_CONFIG_CONNECTION_FAILED;
                 case CONNECTED -> throw new IllegalStateException("unreachable");
             };
-            throw new BusinessException(400, msg);
+            throw new BusinessException(errorCode);
         }
     }
 
     public DbConfig getConfigEntity(Long userId, Long configId) {
         DbConfig config = getById(configId);
         if (config == null || !config.getUserId().equals(userId)) {
-            throw new BusinessException(404, "Database config not found");
+            throw new BusinessException(ErrorCode.DB_CONFIG_NOT_FOUND);
         }
         return config;
     }

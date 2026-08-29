@@ -1,6 +1,7 @@
 package com.dbgenius.service.database;
 
 import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
 import com.dbgenius.model.enums.DbType;
 import org.springframework.stereotype.Component;
 
@@ -59,7 +60,7 @@ public class DatabaseAdapterRegistry {
     public DatabaseAdapter getAdapter(DbType type) {
         DatabaseAdapter adapter = adapters.get(type);
         if (adapter == null) {
-            throw new BusinessException(400, "No adapter registered for database type: " + type.getCode());
+            throw new BusinessException(ErrorCode.NO_ADAPTER, type.getCode());
         }
         return adapter;
     }

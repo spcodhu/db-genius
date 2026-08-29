@@ -1,6 +1,7 @@
 package com.dbgenius.service;
 
 import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
 import com.dbgenius.model.constant.FileTypes;
 import com.dbgenius.service.config.OssProperties;
 import com.dbgenius.service.impl.FileUploadServiceImpl;
@@ -34,7 +35,7 @@ class FileUploadServiceImplTest {
         BusinessException e = assertThrows(BusinessException.class,
                 () -> service.uploadFile(1L, mockFile("evil.exe", 1024)));
 
-        assertTrue(e.getMessage().contains("Unsupported file type"));
+        assertEquals(ErrorCode.FILE_TYPE_NOT_ALLOWED, e.getErrorCode());
         verifyNoInteractions(ossService);
     }
 
@@ -44,7 +45,7 @@ class FileUploadServiceImplTest {
         BusinessException e = assertThrows(BusinessException.class,
                 () -> service.uploadFile(1L, mockFile("report.doc", 1024)));
 
-        assertTrue(e.getMessage().contains("Unsupported file type"));
+        assertEquals(ErrorCode.FILE_TYPE_NOT_ALLOWED, e.getErrorCode());
         verifyNoInteractions(ossService);
     }
 
@@ -53,8 +54,8 @@ class FileUploadServiceImplTest {
         BusinessException e = assertThrows(BusinessException.class,
                 () -> service.uploadFile(1L, mockFile("big.pdf", FileTypes.MAX_FILE_SIZE + 1)));
 
-        assertTrue(e.getMessage().contains("File too large"));
-        assertTrue(e.getMessage().contains("20MB"));
+        assertEquals(ErrorCode.FILE_TOO_LARGE, e.getErrorCode());
+        assertEquals(20L, e.getArgs()[0]);
         verifyNoInteractions(ossService);
     }
 }

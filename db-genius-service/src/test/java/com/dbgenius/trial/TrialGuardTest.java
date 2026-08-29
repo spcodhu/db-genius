@@ -1,5 +1,6 @@
 package com.dbgenius.trial;
 
+import com.dbgenius.common.exception.ErrorCode;
 import com.dbgenius.common.exception.TrialBusinessException;
 import com.dbgenius.model.entity.DbConfig;
 import org.junit.jupiter.api.Test;
@@ -16,7 +17,7 @@ class TrialGuardTest {
 
         assertFalse(guard.isTrialMode());
         assertDoesNotThrow((org.junit.jupiter.api.function.Executable) guard::denyIfTrial);
-        assertDoesNotThrow(() -> guard.denyIfTrial("any"));
+        assertDoesNotThrow(() -> guard.denyIfTrial(ErrorCode.TRIAL_WORKFLOW));
         assertDoesNotThrow(() -> guard.denyIfTrialBuiltin(new DbConfig()));
     }
 
@@ -28,7 +29,7 @@ class TrialGuardTest {
 
         assertTrue(guard.isTrialMode());
         assertThrows(TrialBusinessException.class, guard::denyIfTrial);
-        assertThrows(TrialBusinessException.class, () -> guard.denyIfTrial("custom"));
+        assertThrows(TrialBusinessException.class, () -> guard.denyIfTrial(ErrorCode.TRIAL_DB_COMPARE));
     }
 
     @Test

@@ -6,6 +6,12 @@ server:
 spring:
   application:
     name: db-genius
+  messages:
+    # i18n 资源：messages.properties 为英文基底兜底，fallback-to-system-locale=false
+    # 保证缺语言时回落到 en 而不是服务器系统语言
+    basename: i18n/messages
+    encoding: UTF-8
+    fallback-to-system-locale: false
   ai:
     model:
       # 模型由 ChatModelFactory 运行时动态创建，禁用 Spring AI 默认激活的

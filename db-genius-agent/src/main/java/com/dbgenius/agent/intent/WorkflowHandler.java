@@ -12,6 +12,9 @@ import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
 import com.dbgenius.agent.tool.file.FileAccessGuard;
 import com.dbgenius.agent.usage.TokenUsageAccumulator;
+import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
+import com.dbgenius.common.i18n.MessageService;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.entity.Message;
@@ -38,6 +41,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
@@ -62,6 +66,7 @@ public class WorkflowHandler implements IntentHandler {
     private final ImageReadTool imageReadTool;
     private final TerminateTool terminateTool;
     private final StepHistoryCondenser stepHistoryCondenser;
+    private final MessageService messageService;
 
     @Value("${db-genius.context.tool-output-max-chars:4000}")
     private int toolOutputMaxChars;
@@ -76,9 +81,10 @@ public class WorkflowHandler implements IntentHandler {
     }
 
     @Override
-    @TrialDeny("试用版暂不支持工作流操作")
+    @TrialDeny(ErrorCode.TRIAL_WORKFLOW)
     public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
-                       IntentClassificationResult classification, Long userId, TokenUsageAccumulator tokenUsage) {
+                       IntentClassificationResult classification, Long userId,
+                       TokenUsageAccumulator tokenUsage, Locale locale) {
         List<Long> dbConfigIds = request.getDbConfigIds();
 
         // 先建会话并下发 conversation 事件、落库本轮用户消息，保证即使后续前置校验失败，
@@ -93,7 +99,7 @@ public class WorkflowHandler implements IntentHandler {
         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
         if (dbConfigIds == null || dbConfigIds.isEmpty()) {
-            throw new IllegalArgumentException("工作流需要至少选择一个数据库配置");
+            throw new BusinessException(ErrorCode.WORKFLOW_NO_DB_CONFIG);
         }
 
         validateDbConfigs(userId, dbConfigIds);
@@ -123,7 +129,8 @@ public class WorkflowHandler implements IntentHandler {
 
         DbWorkflowAgent agent = new DbWorkflowAgent(
                 session.reasoningModel(), sqlExecuteTool, fileReadTool, imageReadTool, terminateTool,
-                dbDoc, hasFiles, toolContext);
+                dbDoc, hasFiles, toolContext, locale);
+        agent.setMessageService(messageService);
         agent.setHistoryMessages(historyMessages);
         agent.setExecutor(chatTaskExecutor);
         agent.setSummaryCallback(markdown ->

@@ -2,6 +2,8 @@ package com.dbgenius.agent.compress;
 
 import com.dbgenius.model.vo.CompressResultVO;
 
+import java.util.Locale;
+
 /**
  * 上下文压缩策略接口（策略模式）。
  *
@@ -28,6 +30,7 @@ public interface ContextCompressor {
      * @param conversationId 会话 ID（调用方已完成属主校验）
      * @param userId         会话所属用户 ID，用于解析压缩摘要所用的当前生效模型配置
      * @param options        压缩选项，可为 null
+     * @param locale         本次压缩的语言环境（决定摘要 prompt 语言与结果文案；异步链路必须显式传入）
      */
-    CompressResultVO compress(Long conversationId, Long userId, CompressOptions options);
+    CompressResultVO compress(Long conversationId, Long userId, CompressOptions options, Locale locale);
 }

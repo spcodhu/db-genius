@@ -2,6 +2,8 @@ package com.dbgenius.agent;
 
 import com.dbgenius.agent.compress.StepHistoryCondenser;
 import com.dbgenius.agent.model.AgentState;
+import com.dbgenius.agent.prompt.PromptTemplateLoader;
+import com.dbgenius.common.i18n.MessageService;
 import com.dbgenius.model.vo.SseEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +25,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -73,6 +76,10 @@ public class ToolCallAgent extends ReActAgent {
     private StepHistoryCondenser stepCondenser;
     /** 本轮 Agent 生成内容在 messageList 中的起始下标（历史消息 + 当前用户输入之后），由 onStepStart 记录 */
     private int turnStartIndex;
+    /** 本轮请求的语言环境：驱动 prompt 模板选择与总结输出语言，由具体 Agent 构造时设置 */
+    private Locale locale = Locale.ENGLISH;
+    /** 消息文案服务（可选装配）：装配后 SSE 状态文案按 locale 本地化，未装配保持旧的硬编码兜底 */
+    private MessageService messageService;
 
     public ToolCallAgent(String name, String systemPrompt, String nextStepPrompt,
                          int maxSteps, ReasoningChatModel reasoningChatModel,
@@ -112,6 +119,14 @@ public class ToolCallAgent extends ReActAgent {
         this.stepCondenser = stepCondenser;
     }
 
+    public void setLocale(Locale locale) {
+        this.locale = locale != null ? locale : Locale.ENGLISH;
+    }
+
+    public void setMessageService(MessageService messageService) {
+        this.messageService = messageService;
+    }
+
     @Override
     protected void onStepStart(SseEmitter emitter, String userPrompt) throws Exception {
         if (!historyMessages.isEmpty()) {
@@ -132,7 +147,8 @@ public class ToolCallAgent extends ReActAgent {
     protected boolean think(){
         if (stepCondenser != null) {
             Integer contextWindow = tokenUsageAccumulator != null ? tokenUsageAccumulator.getContextWindow() : null;
-            stepCondenser.condenseIfNeeded(messageList, turnStartIndex, systemPrompt, reasoningChatModel, contextWindow);
+            stepCondenser.condenseIfNeeded(messageList, turnStartIndex, systemPrompt, reasoningChatModel,
+                    contextWindow, locale);
         }
 
         if (nextStepPrompt != null && !nextStepPrompt.isBlank() && currentStep > 1) {
@@ -390,33 +406,12 @@ public class ToolCallAgent extends ReActAgent {
         }
     }
 
-    private static final String SUMMARY_SYSTEM_PROMPT = """
-            You are a concise Markdown summarizer. Your job is to produce the final summary of a database task.
-
-            ## Output Rules
-            1. Output ONLY a Markdown document. Do not wrap it in code fences unless you are showing code/SQL.
-            2. If the task returned query data (rows/columns), present the results as a Markdown table with a clear header.
-               - Use the real column names from the result.
-               - Limit the table to at most 100 rows; if there are more, add a note like “（共 N 条，仅展示前 100 条）”.
-            3. For non-query tasks (data import, schema changes, database comparison, etc.), use Markdown sections, bullet lists, and code blocks to summarize what was done and the final conclusion.
-            4. Keep the summary concise but complete: state what action was taken and the outcome.
-            5. Respond in the same language as the user's original request.
-            6. You have NO tools available in this turn. NEVER output tool-call markup of any kind
-               (no tool_calls/invoke blocks, no XML-like tags, no internal markers). Output Markdown text only.
-            """;
-
-    private static final String SUMMARY_USER_PROMPT_TEMPLATE = """
-            Original user request:
-            %s
-
-            Based on the task execution history above, generate the final Markdown summary.
-            If the history contains query results, output them as a Markdown table.
-            """;
+    private static final String SUMMARY_PROMPT_TEMPLATE = "tool-call-summary";
 
     @Override
     protected void onFinish(SseEmitter emitter, String userPrompt) throws Exception {
         // summary 是一次全量上下文的调用，耗时较长，先推状态避免前端误以为连接已断
-        sendEvent(emitter, SseEvent.of(taskId, currentStep, "thinking", "正在生成总结..."));
+        sendEvent(emitter, SseEvent.of(taskId, currentStep, "thinking", summaryStatusText()));
         String markdown = generateMarkdownSummary(userPrompt, emitter);
         sendEvent(emitter, SseEvent.of(taskId, currentStep, "summary", markdown));
         if (summaryCallback != null) {
@@ -428,12 +423,27 @@ public class ToolCallAgent extends ReActAgent {
         }
     }
 
+    /** "正在生成总结"状态文案：装配了 MessageService 时按本轮 locale 本地化，否则保持旧的硬编码兜底 */
+    private String summaryStatusText() {
+        if (messageService != null) {
+            return messageService.get("chat.summarizing", locale);
+        }
+        return "正在生成总结...";
+    }
+
     private String generateMarkdownSummary(String userPrompt, SseEmitter emitter) {
         try {
+            String[] sections = PromptTemplateLoader.splitSections(
+                    PromptTemplateLoader.load(SUMMARY_PROMPT_TEMPLATE, locale));
+            String systemPrompt = PromptTemplateLoader.withOutputLanguage(sections[0], locale);
+            String userSection = sections.length > 1
+                    ? PromptTemplateLoader.render(sections[1], Map.of("message", userPrompt))
+                    : userPrompt;
+
             List<Message> summaryMessages = new ArrayList<>(messageList.size() + 2);
-            summaryMessages.add(new SystemMessage(SUMMARY_SYSTEM_PROMPT));
+            summaryMessages.add(new SystemMessage(systemPrompt));
             summaryMessages.addAll(messageList);
-            summaryMessages.add(new UserMessage(SUMMARY_USER_PROMPT_TEMPLATE.formatted(userPrompt)));
+            summaryMessages.add(new UserMessage(userSection));
 
             // 流式聚合：reasoning/content 增量实时推前端（打字机效果），聚合全文作为
             // 终态 summary 事件与落库内容；终态事件同时是前端渲染的权威兜底

@@ -2,6 +2,7 @@ package com.dbgenius.service.impl;
 
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
 import com.dbgenius.mapper.UploadedFileMapper;
 import com.dbgenius.model.constant.FileTypes;
 import com.dbgenius.model.entity.UploadedFile;
@@ -25,19 +26,19 @@ public class FileUploadServiceImpl extends ServiceImpl<UploadedFileMapper, Uploa
     private final OssProperties ossProperties;
 
     @Override
-    @TrialDeny("试用版暂不支持文件上传")
+    @TrialDeny(ErrorCode.TRIAL_FILE_UPLOAD)
     public UploadedFile uploadFile(Long userId, MultipartFile file) {
         if (file.isEmpty()) {
-            throw new BusinessException("File is empty");
+            throw new BusinessException(ErrorCode.FILE_EMPTY);
         }
 
         String originalName = file.getOriginalFilename();
         if (!FileTypes.isAllowed(originalName)) {
-            throw new BusinessException("Unsupported file type, allowed: documents "
-                    + FileTypes.DOC_EXTENSIONS + ", images " + FileTypes.IMAGE_EXTENSIONS);
+            throw new BusinessException(ErrorCode.FILE_TYPE_NOT_ALLOWED,
+                    FileTypes.DOC_EXTENSIONS, FileTypes.IMAGE_EXTENSIONS);
         }
         if (file.getSize() > FileTypes.MAX_FILE_SIZE) {
-            throw new BusinessException("File too large, max " + (FileTypes.MAX_FILE_SIZE / 1024 / 1024) + "MB");
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, FileTypes.MAX_FILE_SIZE / 1024 / 1024);
         }
 
         String dirPrefix = ossProperties.getDirPrefix();
@@ -49,7 +50,7 @@ public class FileUploadServiceImpl extends ServiceImpl<UploadedFileMapper, Uploa
         try (InputStream in = file.getInputStream()) {
             ossService.upload(ossKey, in, file.getSize(), file.getContentType());
         } catch (IOException e) {
-            throw new BusinessException("File upload failed: " + e.getMessage());
+            throw new BusinessException(ErrorCode.FILE_UPLOAD_FAILED, e.getMessage());
         }
 
         UploadedFile uploadedFile = new UploadedFile();
@@ -67,10 +68,10 @@ public class FileUploadServiceImpl extends ServiceImpl<UploadedFileMapper, Uploa
     public UploadedFile getOwnedFile(Long fileId, Long userId) {
         UploadedFile file = getById(fileId);
         if (file == null) {
-            throw new BusinessException(404, "File not found");
+            throw new BusinessException(ErrorCode.FILE_NOT_FOUND);
         }
         if (!file.getUserId().equals(userId)) {
-            throw new BusinessException(403, "No permission to access this file");
+            throw new BusinessException(ErrorCode.FILE_NO_PERMISSION);
         }
         return file;
     }

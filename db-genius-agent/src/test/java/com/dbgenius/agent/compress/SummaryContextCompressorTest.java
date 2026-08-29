@@ -2,6 +2,7 @@ package com.dbgenius.agent.compress;
 
 import com.dbgenius.agent.ChatModelFactory;
 import com.dbgenius.agent.ChatModelSession;
+import com.dbgenius.common.i18n.MessageService;
 import com.dbgenius.model.entity.Message;
 import com.dbgenius.model.entity.UserModelConfig;
 import com.dbgenius.model.vo.CompressResultVO;
@@ -21,6 +22,7 @@ import org.springframework.ai.chat.prompt.Prompt;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -50,7 +52,9 @@ class SummaryContextCompressorTest {
         conversationService = mock(ConversationService.class);
         UserModelConfigService userModelConfigService = mock(UserModelConfigService.class);
         chatModelFactory = mock(ChatModelFactory.class);
-        compressor = new SummaryContextCompressor(conversationService, userModelConfigService, chatModelFactory);
+        MessageService messageService = mock(MessageService.class);
+        compressor = new SummaryContextCompressor(
+                conversationService, userModelConfigService, chatModelFactory, messageService);
 
         var field = SummaryContextCompressor.class.getDeclaredField("keepLastMessages");
         field.setAccessible(true);
@@ -89,7 +93,7 @@ class SummaryContextCompressorTest {
         }
         when(conversationService.getInContextMessages(CONVERSATION_ID)).thenReturn(messages);
 
-        CompressResultVO result = compressor.compress(CONVERSATION_ID, USER_ID, null);
+        CompressResultVO result = compressor.compress(CONVERSATION_ID, USER_ID, null, Locale.SIMPLIFIED_CHINESE);
 
         assertThat(result.isCompressed()).isFalse();
         verify(conversationService, never()).saveMessage(any(), any(), any(), any(), any());
@@ -108,7 +112,7 @@ class SummaryContextCompressorTest {
                 .thenReturn(999L);
         stubModelResponse("## 摘要\n\n用户在查询用户表数据。");
 
-        CompressResultVO result = compressor.compress(CONVERSATION_ID, USER_ID, null);
+        CompressResultVO result = compressor.compress(CONVERSATION_ID, USER_ID, null, Locale.SIMPLIFIED_CHINESE);
 
         assertThat(result.isCompressed()).isTrue();
         assertThat(result.getSummaryMessageId()).isEqualTo(999L);
@@ -136,7 +140,7 @@ class SummaryContextCompressorTest {
         when(chatModelFactory.createSession(any(UserModelConfig.class)))
                 .thenReturn(new ChatModelSession(chatModel, null, chatClient));
 
-        CompressResultVO result = compressor.compress(CONVERSATION_ID, USER_ID, null);
+        CompressResultVO result = compressor.compress(CONVERSATION_ID, USER_ID, null, Locale.SIMPLIFIED_CHINESE);
 
         assertThat(result.isCompressed()).isFalse();
         verify(conversationService, never()).markMessagesCompressed(any());

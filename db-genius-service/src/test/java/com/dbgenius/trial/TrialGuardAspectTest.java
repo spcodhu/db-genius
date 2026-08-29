@@ -1,5 +1,6 @@
 package com.dbgenius.trial;
 
+import com.dbgenius.common.exception.ErrorCode;
 import com.dbgenius.common.exception.TrialBusinessException;
 import org.junit.jupiter.api.Test;
 
@@ -12,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class TrialGuardAspectTest {
 
-    private TrialDeny trialDeny(String message) {
+    private TrialDeny trialDeny(ErrorCode errorCode) {
         return new TrialDeny() {
             @Override
             public Class<? extends Annotation> annotationType() {
@@ -20,8 +21,8 @@ class TrialGuardAspectTest {
             }
 
             @Override
-            public String value() {
-                return message;
+            public ErrorCode value() {
+                return errorCode;
             }
         };
     }
@@ -33,8 +34,9 @@ class TrialGuardAspectTest {
         TrialGuardAspect aspect = new TrialGuardAspect(new TrialGuard(properties));
 
         TrialBusinessException e = assertThrows(TrialBusinessException.class,
-                () -> aspect.denyIfTrial(trialDeny("试用版暂不支持此操作")));
-        assertEquals("试用版暂不支持此操作", e.getMessage());
+                () -> aspect.denyIfTrial(trialDeny(ErrorCode.TRIAL_WORKFLOW)));
+        assertEquals(ErrorCode.TRIAL_WORKFLOW, e.getErrorCode());
+        assertEquals(403, e.getCode());
     }
 
     @Test
@@ -43,6 +45,6 @@ class TrialGuardAspectTest {
         properties.setEnabled(false);
         TrialGuardAspect aspect = new TrialGuardAspect(new TrialGuard(properties));
 
-        assertDoesNotThrow(() -> aspect.denyIfTrial(trialDeny("试用版暂不支持此操作")));
+        assertDoesNotThrow(() -> aspect.denyIfTrial(trialDeny(ErrorCode.TRIAL_WORKFLOW)));
     }
 }

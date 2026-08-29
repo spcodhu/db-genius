@@ -4,6 +4,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
 import com.dbgenius.mapper.SysUserMapper;
 import com.dbgenius.model.dto.CreateUserRequest;
 import com.dbgenius.model.dto.LoginRequest;
@@ -27,13 +28,13 @@ public class UserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impleme
         SysUser user = getOne(new LambdaQueryWrapper<SysUser>()
                 .eq(SysUser::getUsername, request.getUsername()));
         if (user == null) {
-            throw new BusinessException(401, "Invalid username or password");
+            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
         }
         if (user.getStatus() != 1) {
-            throw new BusinessException(403, "Account is disabled");
+            throw new BusinessException(ErrorCode.ACCOUNT_DISABLED);
         }
         if (!matchPassword(request.getPassword(), user.getPasswordHash())) {
-            throw new BusinessException(401, "Invalid username or password");
+            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
         }
 
         StpUtil.login(user.getId());
@@ -53,17 +54,17 @@ public class UserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impleme
     }
 
     @Override
-    @TrialDeny("试用版暂不支持创建用户")
+    @TrialDeny(ErrorCode.TRIAL_CREATE_USER)
     public void createUser(CreateUserRequest request) {
         String role = (String) StpUtil.getSession().get("role");
         if (!ADMIN_ROLE.equals(role)) {
-            throw new BusinessException(403, "Only administrators can create users");
+            throw new BusinessException(ErrorCode.ADMIN_ONLY);
         }
 
         long count = count(new LambdaQueryWrapper<SysUser>()
                 .eq(SysUser::getUsername, request.getUsername()));
         if (count > 0) {
-            throw new BusinessException(400, "Username already exists");
+            throw new BusinessException(ErrorCode.USERNAME_EXISTS);
         }
 
         SysUser user = new SysUser();

@@ -1,6 +1,7 @@
 package com.dbgenius.agent.compress;
 
 import com.dbgenius.common.exception.BusinessException;
+import com.dbgenius.common.exception.ErrorCode;
 import com.dbgenius.model.entity.Conversation;
 import com.dbgenius.model.vo.CompressResultVO;
 import com.dbgenius.service.ConversationService;
@@ -8,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -35,14 +37,14 @@ public class DefaultContextCompressService implements ContextCompressService {
     }
 
     @Override
-    public CompressResultVO compress(Long userId, Long conversationId, CompressOptions options) {
+    public CompressResultVO compress(Long userId, Long conversationId, CompressOptions options, Locale locale) {
         Conversation conversation = conversationService.getById(conversationId);
         if (conversation == null || !conversation.getUserId().equals(userId)) {
-            throw new BusinessException(404, "Conversation not found");
+            throw new BusinessException(ErrorCode.CONVERSATION_NOT_FOUND);
         }
         ContextCompressor compressor = compressors.getOrDefault(
                 defaultStrategy, compressors.getOrDefault(
                         NoopContextCompressor.CODE, compressors.values().iterator().next()));
-        return compressor.compress(conversationId, userId, options);
+        return compressor.compress(conversationId, userId, options, locale);
     }
 }

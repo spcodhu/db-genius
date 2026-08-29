@@ -14,12 +14,14 @@ import com.dbgenius.service.ConversationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
+import java.util.Locale;
 
 @Slf4j
 @RestController
@@ -37,11 +39,13 @@ public class ChatController {
     @PostMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<SseEmitter> chat(@Valid @RequestBody UnifiedChatRequest request) {
         Long userId = StpUtil.getLoginIdAsLong();
+        // 同步段取当前请求 locale，显式传入异步链路（异步线程中 LocaleContextHolder 已失效）
+        Locale locale = LocaleContextHolder.getLocale();
         // X-Accel-Buffering: no 防止 nginx 等中间代理缓冲 SSE 事件导致前端成批收到
         return ResponseEntity.ok()
                 .header("Cache-Control", "no-cache")
                 .header("X-Accel-Buffering", "no")
-                .body(intentRouter.route(request, userId));
+                .body(intentRouter.route(request, userId, locale));
     }
 
     @GetMapping("/conversations")
@@ -69,6 +73,6 @@ public class ChatController {
                                                     @RequestBody(required = false) @Valid CompressRequest request) {
         Long userId = StpUtil.getLoginIdAsLong();
         CompressOptions options = CompressOptions.of(request != null ? request.getTargetTokens() : null);
-        return R.ok(contextCompressService.compress(userId, id, options));
+        return R.ok(contextCompressService.compress(userId, id, options, LocaleContextHolder.getLocale()));
     }
 }

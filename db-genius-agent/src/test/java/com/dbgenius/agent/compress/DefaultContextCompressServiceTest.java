@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
 import java.util.List;
+import java.util.Locale;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -49,17 +50,17 @@ class DefaultContextCompressServiceTest {
         when(noopCompressor.strategyCode()).thenReturn("noop");
 
         CompressResultVO expected = CompressResultVO.builder().conversationId(1L).compressed(true).build();
-        when(summaryCompressor.compress(1L, 100L, null)).thenReturn(expected);
+        when(summaryCompressor.compress(1L, 100L, null, Locale.ENGLISH)).thenReturn(expected);
 
         DefaultContextCompressService service = new DefaultContextCompressService(
                 conversationService, List.of(summaryCompressor, noopCompressor));
         setDefaultStrategy(service, "summary");
 
-        CompressResultVO result = service.compress(100L, 1L, null);
+        CompressResultVO result = service.compress(100L, 1L, null, Locale.ENGLISH);
 
         assertThat(result).isEqualTo(expected);
-        verify(summaryCompressor).compress(1L, 100L, null);
-        verify(noopCompressor, never()).compress(any(), any(), any());
+        verify(summaryCompressor).compress(1L, 100L, null, Locale.ENGLISH);
+        verify(noopCompressor, never()).compress(any(), any(), any(), any());
     }
 
     @Test
@@ -69,17 +70,17 @@ class DefaultContextCompressServiceTest {
 
         ContextCompressor noopCompressor = mock(ContextCompressor.class);
         when(noopCompressor.strategyCode()).thenReturn("noop");
-        when(noopCompressor.compress(1L, 100L, null))
+        when(noopCompressor.compress(1L, 100L, null, Locale.ENGLISH))
                 .thenReturn(CompressResultVO.builder().conversationId(1L).compressed(false).build());
 
         DefaultContextCompressService service = new DefaultContextCompressService(
                 conversationService, List.of(noopCompressor));
         setDefaultStrategy(service, "does-not-exist");
 
-        CompressResultVO result = service.compress(100L, 1L, null);
+        CompressResultVO result = service.compress(100L, 1L, null, Locale.ENGLISH);
 
         assertThat(result.isCompressed()).isFalse();
-        verify(noopCompressor).compress(1L, 100L, null);
+        verify(noopCompressor).compress(1L, 100L, null, Locale.ENGLISH);
     }
 
     @Test
@@ -92,8 +93,8 @@ class DefaultContextCompressServiceTest {
         DefaultContextCompressService service = new DefaultContextCompressService(
                 conversationService, List.of(compressor));
 
-        assertThatThrownBy(() -> service.compress(100L, 1L, null))
+        assertThatThrownBy(() -> service.compress(100L, 1L, null, Locale.ENGLISH))
                 .isInstanceOf(BusinessException.class);
-        verify(compressor, never()).compress(any(), any(), any());
+        verify(compressor, never()).compress(any(), any(), any(), any());
     }
 }
