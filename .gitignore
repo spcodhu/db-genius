@@ -39,4 +39,4 @@ logs/
 uploads/
 
 ### Prompt ###
-**/prompt/
+db-genius-web/src/main/resources/prompt/
