@@ -41,6 +41,7 @@ Key design points:
 - **LLM intent routing.** `IntentClassifier` (structured LLM output) → `IntentHandlerRegistry` (Strategy + Registry, auto-discovered `IntentHandler` beans). New intents are just new beans.
 - **Template-method agent framework.** `BaseAgent → ReActAgent → ToolCallAgent`, with concrete `DbSqlAgent`, `DbWorkflowAgent`, `DbCompareAgent`. `think()` streams model reasoning as SSE `reasoning` events; `act()` executes tools.
 - **Bounded tool output.** Oversized tool results are truncated structurally (row sets are trimmed row-by-row so the payload stays valid JSON) and the full text is parked in a per-task artifact store; the model can page it back with `readToolOutput(artifactId, offset, limit)` instead of blindly re-running the same query. Every database statement runs under a query timeout.
+- **Tiered in-run context compaction.** Inside a single agent run the context is first slimmed deterministically — stale tool observations are replaced by a placeholder that still carries a retrieval handle (zero LLM calls, sub-millisecond). Only if that is not enough does it escalate to an LLM summary of the earliest steps. Both tiers stream a `context_compact` SSE event, so compaction is visible rather than an unexplained pause.
 - **Async backbone.** RabbitMQ drives async connection verification and schema-doc generation; Aliyun OSS stores uploaded files; credentials are encrypted with AES-256-GCM.
 
 ### Supported target databases
@@ -90,7 +91,7 @@ All events are JSON objects:
 {
   "taskId": "uuid",
   "step": 1,
-  "type": "classifying | classified | clarify | routing | thinking | reasoning | content | sql | result | error | file_parsed | step | summary_delta | summary | done",
+  "type": "classifying | classified | clarify | routing | thinking | reasoning | content | sql | result | error | file_parsed | step | context_compact | summary_delta | summary | done",
   "content": "...",
   "timestamp": 1719648000000
 }
@@ -104,6 +105,7 @@ All events are JSON objects:
 | `thinking` / `reasoning` | Agent analysis / streamed LLM reasoning |
 | `content` | Streaming text (simple chat) |
 | `step` | One tool-execution result inside the ReAct loop |
+| `context_compact` | In-run context compaction progress (`{phase, tier, beforeTokens, afterTokens, affectedUnits}`) so the UI can show it instead of an unexplained pause |
 | `summary_delta` / `summary` | Streaming final Markdown / authoritative full text |
 | `error` / `done` | Failure details / end of stream |
 

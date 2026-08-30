@@ -96,6 +96,34 @@ public class ToolOutputGuard {
         artifactStore.evictTask(taskId);
     }
 
+    /**
+     * 把一段内容登记进制品仓换取取回句柄，不做任何截断。供 Tier-1 观测遮蔽
+     * （{@code ObservationElider}）在丢弃早期工具结果前保留可恢复引用。
+     *
+     * <p>若该内容本身已是本类截断产出的信封（带 {@code artifactId} 字段），直接复用其中的句柄，
+     * 避免为同一份数据重复登记两份制品。</p>
+     *
+     * @return 取回句柄；taskId 为空或内容为空时返回 null
+     */
+    public String park(String taskId, String toolName, String content) {
+        String existing = existingArtifactId(content);
+        return existing != null ? existing : artifactStore.register(taskId, toolName, content);
+    }
+
+    /** 从截断信封中提取此前登记的 artifactId；不是信封或无该字段时返回 null。 */
+    private String existingArtifactId(String content) {
+        if (content == null || !content.contains("artifactId")) {
+            return null;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(content);
+            JsonNode artifactId = node.isObject() ? node.get("artifactId") : null;
+            return artifactId != null && artifactId.isTextual() ? artifactId.asText() : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private int limitFor(String toolName) {
         Integer override = toolName == null ? null : perToolOverrides().get(toolName);
         return Math.max(200, override != null ? override : maxChars);

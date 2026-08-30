@@ -1,10 +1,13 @@
 package com.dbgenius.agent;
 
+import com.dbgenius.agent.compress.ContextCompactListener;
+import com.dbgenius.agent.compress.ObservationElider;
 import com.dbgenius.agent.compress.StepHistoryCondenser;
 import com.dbgenius.agent.model.AgentState;
 import com.dbgenius.agent.prompt.PromptTemplateLoader;
 import com.dbgenius.agent.tool.guard.ToolOutputGuard;
 import com.dbgenius.common.i18n.MessageService;
+import com.dbgenius.model.vo.ContextCompactVO;
 import com.dbgenius.model.vo.SseEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -71,8 +74,10 @@ public class ToolCallAgent extends ReActAgent {
     private AgentMessageSink messageSink;
     /** 工具输出超长拦截器（始终生效）：默认用一份独立默认实例，生产由 Handler 注入 Spring 管理的单例 */
     private ToolOutputGuard toolOutputGuard = ToolOutputGuard.withDefaults();
-    /** 单轮内步骤历史压缩器，默认不装配（null），行为与现状一致 */
+    /** 单轮内步骤历史压缩器（Tier-3 LLM 摘要兜底），默认不装配（null），行为与现状一致 */
     private StepHistoryCondenser stepCondenser;
+    /** 单轮内确定性观测遮蔽（Tier-1，零 LLM 成本），默认不装配（null） */
+    private ObservationElider observationElider;
     /** 本轮 Agent 生成内容在 messageList 中的起始下标（历史消息 + 当前用户输入之后），由 onStepStart 记录 */
     private int turnStartIndex;
     /** 本轮请求的语言环境：驱动 prompt 模板选择与总结输出语言，由具体 Agent 构造时设置 */
@@ -120,6 +125,91 @@ public class ToolCallAgent extends ReActAgent {
         this.stepCondenser = stepCondenser;
     }
 
+    public void setObservationElider(ObservationElider observationElider) {
+        this.observationElider = observationElider;
+    }
+
+    /**
+     * 单轮内上下文瘦身的阶梯调度：先做零成本的 Tier-1 确定性观测遮蔽，遮蔽之后仍逼近窗口
+     * 才升级到 Tier-3 的 LLM 摘要。两档都通过 {@code context_compact} SSE 事件对前端可见。
+     *
+     * <p>任何异常都不允许打断 ReAct 循环——瘦身失败只是上下文更大，模型仍可继续工作。</p>
+     */
+    private void compactContextIfNeeded() {
+        Integer contextWindow = tokenUsageAccumulator != null ? tokenUsageAccumulator.getContextWindow() : null;
+        if (contextWindow == null || contextWindow <= 0) {
+            return;
+        }
+        try {
+            if (observationElider != null) {
+                ObservationElider.Result result = observationElider.elideIfNeeded(
+                        messageList, turnStartIndex, systemPrompt, contextWindow, taskId);
+                if (result.elided()) {
+                    // 毫秒级操作，只推 end，避免前端卡片闪烁
+                    sendCompactEvent(ContextCompactVO.builder()
+                            .phase("end")
+                            .tier(ContextCompactListener.TIER_ELIDE)
+                            .message(compactedText(ContextCompactListener.TIER_ELIDE,
+                                    result.beforeTokens() - result.afterTokens()))
+                            .beforeTokens(result.beforeTokens())
+                            .afterTokens(result.afterTokens())
+                            .affectedUnits(result.elidedCount())
+                            .build());
+                }
+            }
+            if (stepCondenser != null) {
+                stepCondenser.condenseIfNeeded(messageList, turnStartIndex, systemPrompt, reasoningChatModel,
+                        contextWindow, locale, summarizeCompactListener());
+            }
+        } catch (Exception e) {
+            log.warn("[{}] in-run context compaction skipped: {}", name, e.getMessage());
+        }
+    }
+
+    /** Tier-3 是秒级 LLM 调用，start/end 都推，消灭「莫名等待」。 */
+    private ContextCompactListener summarizeCompactListener() {
+        return new ContextCompactListener() {
+            @Override
+            public void onCompactStart(String tier) {
+                sendCompactEvent(ContextCompactVO.builder()
+                        .phase("start")
+                        .tier(tier)
+                        .message(compactingText())
+                        .build());
+            }
+
+            @Override
+            public void onCompactEnd(String tier, int beforeTokens, int afterTokens, int affectedUnits) {
+                sendCompactEvent(ContextCompactVO.builder()
+                        .phase("end")
+                        .tier(tier)
+                        .message(compactedText(tier, beforeTokens - afterTokens))
+                        .beforeTokens(beforeTokens)
+                        .afterTokens(afterTokens)
+                        .affectedUnits(affectedUnits)
+                        .build());
+            }
+        };
+    }
+
+    private void sendCompactEvent(ContextCompactVO payload) {
+        if (emitter != null) {
+            sendEvent(emitter, SseEvent.of(taskId, currentStep, "context_compact", payload));
+        }
+    }
+
+    private String compactingText() {
+        return messageService != null ? messageService.get("chat.compacting", locale) : "正在压缩上下文...";
+    }
+
+    private String compactedText(String tier, int savedTokens) {
+        int saved = Math.max(0, savedTokens);
+        if (messageService != null) {
+            return messageService.get("chat.compacted." + tier, locale, saved);
+        }
+        return "上下文已压缩，约节省 " + saved + " tokens";
+    }
+
     public void setLocale(Locale locale) {
         this.locale = locale != null ? locale : Locale.ENGLISH;
     }
@@ -146,11 +236,7 @@ public class ToolCallAgent extends ReActAgent {
      */
     @Override
     protected boolean think(){
-        if (stepCondenser != null) {
-            Integer contextWindow = tokenUsageAccumulator != null ? tokenUsageAccumulator.getContextWindow() : null;
-            stepCondenser.condenseIfNeeded(messageList, turnStartIndex, systemPrompt, reasoningChatModel,
-                    contextWindow, locale);
-        }
+        compactContextIfNeeded();
 
         if (nextStepPrompt != null && !nextStepPrompt.isBlank() && currentStep > 1) {
             messageList.add(new UserMessage(nextStepPrompt));

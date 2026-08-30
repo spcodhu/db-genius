@@ -34,10 +34,31 @@ import static org.mockito.Mockito.when;
 class StepHistoryCondenserTest {
 
     private StepHistoryCondenser condenser;
+    private RecordingCompactListener listener;
 
     @BeforeEach
     void setUp() {
         condenser = new StepHistoryCondenser();
+        listener = new RecordingCompactListener();
+    }
+
+    /** 记录压缩过程回调，验证 SSE 可见性（start/end 都被通知到）。 */
+    private static final class RecordingCompactListener implements ContextCompactListener {
+
+        private int startCount;
+        private int endCount;
+        private int affectedUnits;
+
+        @Override
+        public void onCompactStart(String tier) {
+            startCount++;
+        }
+
+        @Override
+        public void onCompactEnd(String tier, int beforeTokens, int afterTokens, int units) {
+            endCount++;
+            affectedUnits = units;
+        }
     }
 
     private void configure(boolean enabled, double threshold, int keepLastSteps) throws Exception {
@@ -83,7 +104,7 @@ class StepHistoryCondenserTest {
         List<Message> messageList = new ArrayList<>(List.of(new UserMessage("task")));
         List<Message> snapshot = new ArrayList<>(messageList);
 
-        boolean condensed = condenser.condenseIfNeeded(messageList, 1, "system", mock(ChatModel.class), 1000, Locale.SIMPLIFIED_CHINESE);
+        boolean condensed = condenser.condenseIfNeeded(messageList, 1, "system", mock(ChatModel.class), 1000, Locale.SIMPLIFIED_CHINESE, listener);
 
         assertThat(condensed).isFalse();
         assertThat(messageList).isEqualTo(snapshot);
@@ -95,7 +116,7 @@ class StepHistoryCondenserTest {
         List<Message> messageList = new ArrayList<>(List.of(new UserMessage("task")));
         messageList.addAll(stepWithToolCall("call_1", "echo", "short"));
 
-        boolean condensed = condenser.condenseIfNeeded(messageList, 1, "system", mock(ChatModel.class), 1_000_000, Locale.SIMPLIFIED_CHINESE);
+        boolean condensed = condenser.condenseIfNeeded(messageList, 1, "system", mock(ChatModel.class), 1_000_000, Locale.SIMPLIFIED_CHINESE, listener);
 
         assertThat(condensed).isFalse();
     }
@@ -116,7 +137,7 @@ class StepHistoryCondenserTest {
         List<Message> beforeTurnSnapshot = new ArrayList<>(messageList.subList(0, turnStartIndex));
 
         boolean condensed = condenser.condenseIfNeeded(messageList, turnStartIndex, "system",
-                modelReturning("## 进展总结\n\n已完成 step1、step2。"), 1000, Locale.SIMPLIFIED_CHINESE);
+                modelReturning("## 进展总结\n\n已完成 step1、step2。"), 1000, Locale.SIMPLIFIED_CHINESE, listener);
 
         assertThat(condensed).isTrue();
         // turnStartIndex 之前的消息完全不变
@@ -133,6 +154,11 @@ class StepHistoryCondenserTest {
         assertThat(tail.get(2)).isInstanceOf(ToolResponseMessage.class);
         ToolResponseMessage keptToolResponse = (ToolResponseMessage) tail.get(2);
         assertThat(keptToolResponse.getResponses().get(0).name()).isEqualTo("step3Tool");
+
+        // 压缩过程对前端可见：秒级的 LLM 摘要 start/end 都回调
+        assertThat(listener.startCount).isEqualTo(1);
+        assertThat(listener.endCount).isEqualTo(1);
+        assertThat(listener.affectedUnits).isEqualTo(2);
     }
 
     @Test
@@ -144,7 +170,7 @@ class StepHistoryCondenserTest {
         List<Message> snapshot = new ArrayList<>(messageList);
 
         boolean condensed = condenser.condenseIfNeeded(messageList, turnStartIndex, "system",
-                mock(ChatModel.class), 1000, Locale.SIMPLIFIED_CHINESE);
+                mock(ChatModel.class), 1000, Locale.SIMPLIFIED_CHINESE, listener);
 
         assertThat(condensed).isFalse();
         assertThat(messageList).isEqualTo(snapshot);
@@ -162,7 +188,7 @@ class StepHistoryCondenserTest {
         ChatModel failingModel = mock(ChatModel.class);
         when(failingModel.call(any(Prompt.class))).thenThrow(new RuntimeException("boom"));
 
-        boolean condensed = condenser.condenseIfNeeded(messageList, turnStartIndex, "system", failingModel, 1000, Locale.SIMPLIFIED_CHINESE);
+        boolean condensed = condenser.condenseIfNeeded(messageList, turnStartIndex, "system", failingModel, 1000, Locale.SIMPLIFIED_CHINESE, listener);
 
         assertThat(condensed).isFalse();
         assertThat(messageList).isEqualTo(snapshot);

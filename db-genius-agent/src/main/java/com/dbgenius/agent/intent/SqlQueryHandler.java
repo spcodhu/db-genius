@@ -5,6 +5,7 @@ import com.dbgenius.agent.ChatModelSession;
 import com.dbgenius.agent.DbSqlAgent;
 import com.dbgenius.agent.ReasoningChatModel;
 import com.dbgenius.agent.ToolCallAgent;
+import com.dbgenius.agent.compress.ObservationElider;
 import com.dbgenius.agent.compress.StepHistoryCondenser;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
@@ -61,6 +62,7 @@ public class SqlQueryHandler implements IntentHandler {
     private final ToolOutputReadTool toolOutputReadTool;
     private final ToolOutputGuard toolOutputGuard;
     private final StepHistoryCondenser stepHistoryCondenser;
+    private final ObservationElider observationElider;
     private final MessageService messageService;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
@@ -114,6 +116,7 @@ public class SqlQueryHandler implements IntentHandler {
                     conversation.getId(), usageVO.getTotalTokens(), usageVO.getContextTokens());
             usageVO.setConversationTotalTokens(newTotal);
         });
+        agent.setObservationElider(observationElider);
         agent.setStepCondenser(stepHistoryCondenser);
         agent.setToolOutputGuard(toolOutputGuard);
         agent.setMessageSink(new ToolCallAgent.AgentMessageSink() {

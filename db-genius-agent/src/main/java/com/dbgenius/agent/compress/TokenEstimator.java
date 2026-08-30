@@ -4,7 +4,9 @@ import com.knuddels.jtokkit.Encodings;
 import com.knuddels.jtokkit.api.Encoding;
 import com.knuddels.jtokkit.api.EncodingRegistry;
 import com.knuddels.jtokkit.api.EncodingType;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 
 import java.util.List;
 
@@ -32,14 +34,40 @@ public final class TokenEstimator {
         return ENCODING.countTokens(text);
     }
 
-    /** 估算一组 Spring AI {@link Message} 的 token 数总和（取每条消息的文本内容）。 */
+    /**
+     * 估算一组 Spring AI {@link Message} 的 token 数总和。
+     *
+     * <p><b>注意：</b>不能只取 {@code message.getText()}——{@link ToolResponseMessage#getText()}
+     * 恒为空串，而工具结果恰恰是单轮上下文膨胀的最大来源；{@link AssistantMessage} 的
+     * {@code tool_calls}（函数名 + arguments JSON）同样会真实进入请求体。两者都必须计入，
+     * 否则单轮内压缩的阈值判断会严重低估实际占用而永远不触发。</p>
+     */
     public static int estimate(List<? extends Message> messages) {
         if (messages == null || messages.isEmpty()) {
             return 0;
         }
         int total = 0;
         for (Message message : messages) {
-            total += estimate(message.getText());
+            total += estimateMessage(message);
+        }
+        return total;
+    }
+
+    /** 估算单条消息的 token 数：正文 + 工具结果 + 工具调用参数。 */
+    public static int estimateMessage(Message message) {
+        if (message == null) {
+            return 0;
+        }
+        int total = estimate(message.getText());
+        if (message instanceof ToolResponseMessage toolResponseMessage) {
+            for (ToolResponseMessage.ToolResponse response : toolResponseMessage.getResponses()) {
+                total += estimate(response.name()) + estimate(response.responseData());
+            }
+        } else if (message instanceof AssistantMessage assistantMessage
+                && assistantMessage.getToolCalls() != null) {
+            for (AssistantMessage.ToolCall toolCall : assistantMessage.getToolCalls()) {
+                total += estimate(toolCall.name()) + estimate(toolCall.arguments());
+            }
         }
         return total;
     }

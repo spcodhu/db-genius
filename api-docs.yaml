@@ -298,6 +298,7 @@ paths:
         | `content` | 简单会话的流式文本片段 | 字符串 |
         | `summary_delta` | 最终总结的流式 Markdown 增量片段（打字机渲染），其前可能伴随 `reasoning` 增量 | 字符串 |
         | `summary` | 终态全量 Markdown 总结，作为权威内容覆盖流式增量完成最终渲染 | Markdown 字符串 |
+        | `context_compact` | 单轮内上下文压缩的过程通知（可按工具卡片渲染，避免压缩期间的莫名等待） | JSON 对象（ContextCompactVO）：`{"phase": "start\|end", "tier": "elide\|summarize", "message": "正在压缩上下文...", "beforeTokens": 51200, "afterTokens": 17100, "affectedUnits": 5}` |
         | `error` | 执行出错 | 字符串，错误信息 |
         | `usage` | 本轮 token 用量统计（done 之前发出） | JSON 对象（TokenUsageVO）：`{"promptTokens": 1200, "completionTokens": 340, "totalTokens": 1540, "contextTokens": 1180, "callCount": 4, "conversationTotalTokens": 6120, "contextWindow": 65536}` |
         | `done` | 流结束信号 | null |
@@ -516,9 +517,13 @@ paths:
       description: |
         主动压缩指定对话的上下文（将历史消息摘要化以降低 token 占用）。
 
-        当前为骨架实现（noop 策略）：返回 `compressed=false`，`message` 提示功能即将上线。
-        未来将支持 LLM 摘要压缩策略，并自动在占用达阈值时触发
+        采用 LLM 摘要策略（`SummaryContextCompressor`）：保留最近若干条消息原样，
+        更早的消息折叠为一条 summary 消息。也可在占用达阈值时自动触发
         （`db-genius.context.auto-compress.enabled/threshold`，默认关闭）。
+
+        本接口只处理**跨轮历史**。单轮内（Agent 多步 ReAct 循环）的上下文瘦身是自动的、
+        分档进行的：先做零成本的确定性观测遮蔽，仍不够才升级为 LLM 摘要，
+        过程通过 SSE `context_compact` 事件对前端可见。
 
         错误码：
         - `404`：对话不存在或不属于当前用户
@@ -1498,7 +1503,7 @@ components:
           type: string
           description: 事件类型
           enum: [thinking, reasoning, step, summary_delta, summary, error, done,
-                 classifying, classified, clarify, routing, content, usage]
+                 classifying, classified, clarify, routing, content, usage, context_compact]
         content:
           description: |
             事件内容，根据 type 不同有不同含义：
@@ -1514,6 +1519,7 @@ components:
             - summary: 终态全量 Markdown 总结，权威内容，覆盖流式增量完成最终渲染；查询结果以表格展示，其他任务按结构化 Markdown 展示
             - error: 错误详情
             - usage: {"promptTokens": 1200, "completionTokens": 340, "totalTokens": 1540, "contextTokens": 1180, "callCount": 4, "conversationTotalTokens": 6120, "contextWindow": 65536}（done 之前发出）
+            - context_compact: {"phase": "end", "tier": "elide", "message": "上下文已压缩...", "beforeTokens": 51200, "afterTokens": 17100, "affectedUnits": 5}
             - done: null
         timestamp:
           type: integer

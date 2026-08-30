@@ -19,8 +19,12 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * 单次 Agent 运行内（{@code ToolCallAgent} 多步 ReAct 循环）的上下文压缩：当 {@code messageList}
- * 估算 token 数逼近模型上下文窗口时，把最早的步骤压缩为一条摘要，只保留最近若干个完整步骤原样不动。
+ * 单次 Agent 运行内的上下文压缩 <b>Tier-3 兜底策略</b>：把最早的若干步骤整体喂给模型压成一条摘要，
+ * 只保留最近若干个完整步骤原样不动。
+ *
+ * <p><b>为什么是兜底：</b>本策略要额外付一次全量 prompt 的 token 费用与数秒到数十秒的等待，
+ * 在轮次内性价比很低。默认由零成本的 Tier-1 {@link ObservationElider}（确定性观测遮蔽）先兜住，
+ * 只有遮蔽之后仍逼近上下文窗口（默认 0.8）时才升级到本策略，触发概率因此被压到极低。</p>
  *
  * <p>只作用于本轮 Agent 自己生成的步骤消息（由调用方传入的 {@code turnStartIndex} 之后），
  * {@code turnStartIndex} 之前的历史消息与当前用户输入永远不动，与跨轮压缩
@@ -33,14 +37,14 @@ import java.util.Map;
 @Component
 public class StepHistoryCondenser {
 
-    @Value("${db-genius.context.in-run-compress.enabled:false}")
-    private boolean enabled;
+    @Value("${db-genius.context.in-run.summarize.enabled:true}")
+    private boolean enabled = true;
 
-    @Value("${db-genius.context.in-run-compress.threshold:0.7}")
-    private double threshold;
+    @Value("${db-genius.context.in-run.summarize.threshold:0.8}")
+    private double threshold = 0.8;
 
-    @Value("${db-genius.context.in-run-compress.keep-last-steps:4}")
-    private int keepLastSteps;
+    @Value("${db-genius.context.in-run.summarize.keep-last-steps:4}")
+    private int keepLastSteps = 4;
 
     private static final String PROMPT_TEMPLATE = "step-condenser";
 
@@ -54,10 +58,12 @@ public class StepHistoryCondenser {
      * @param chatModel    用于生成摘要的模型（复用 Agent 已持有的 ReasoningChatModel 即可）
      * @param contextWindow 当前模型的上下文窗口大小，未知（null 或 &lt;=0）时跳过
      * @param locale       本轮请求的语言环境，决定压缩 prompt 模板语言
+     * @param listener     压缩过程回调，用于把「正在压缩」推给前端；可为 null
      * @return true 表示本次执行了压缩
      */
     public boolean condenseIfNeeded(List<Message> messageList, int turnStartIndex, String systemPrompt,
-                                    ChatModel chatModel, Integer contextWindow, Locale locale) {
+                                    ChatModel chatModel, Integer contextWindow, Locale locale,
+                                    ContextCompactListener listener) {
         if (!enabled || contextWindow == null || contextWindow <= 0) {
             return false;
         }
@@ -84,10 +90,13 @@ public class StepHistoryCondenser {
         List<Message> flattenedToCondense = toCondense.stream().flatMap(List::stream).toList();
 
         String summaryText;
+        // LLM 摘要是秒级耗时操作，先推 start 事件，避免前端出现无任何反馈的等待
+        notifyStart(listener);
         try {
             summaryText = condense(chatModel, flattenedToCondense, locale);
         } catch (Exception e) {
             log.warn("[StepHistoryCondenser] in-run condensation failed, skip this round: {}", e.getMessage());
+            notifyEnd(listener, estimated, estimated, 0);
             return false;
         }
 
@@ -100,9 +109,34 @@ public class StepHistoryCondenser {
         }
         messageList.addAll(replacement);
 
-        log.info("[StepHistoryCondenser] condensed {} step(s) (estimated {} tokens) into a summary, kept last {} step(s)",
-                toCondense.size(), estimated, toKeep.size());
+        int after = TokenEstimator.estimate(systemPrompt) + TokenEstimator.estimate(messageList);
+        log.info("[StepHistoryCondenser] condensed {} step(s) (estimated tokens {} -> {}), kept last {} step(s)",
+                toCondense.size(), estimated, after, toKeep.size());
+        notifyEnd(listener, estimated, after, toCondense.size());
         return true;
+    }
+
+    /** 回调失败绝不影响压缩本身：SSE 推送异常只记日志。 */
+    private void notifyStart(ContextCompactListener listener) {
+        if (listener == null) {
+            return;
+        }
+        try {
+            listener.onCompactStart(ContextCompactListener.TIER_SUMMARIZE);
+        } catch (Exception e) {
+            log.warn("[StepHistoryCondenser] compact listener (start) failed: {}", e.getMessage());
+        }
+    }
+
+    private void notifyEnd(ContextCompactListener listener, int before, int after, int affectedUnits) {
+        if (listener == null) {
+            return;
+        }
+        try {
+            listener.onCompactEnd(ContextCompactListener.TIER_SUMMARIZE, before, after, affectedUnits);
+        } catch (Exception e) {
+            log.warn("[StepHistoryCondenser] compact listener (end) failed: {}", e.getMessage());
+        }
     }
 
     /**

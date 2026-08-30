@@ -2,6 +2,7 @@ package com.dbgenius.agent.compress;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 
 import java.util.List;
@@ -48,5 +49,30 @@ class TokenEstimatorTest {
         int expected = TokenEstimator.estimate(userMessage.getText()) + TokenEstimator.estimate(assistantMessage.getText());
 
         assertThat(combined).isEqualTo(expected);
+    }
+
+    @Test
+    void shouldCountToolResponsePayloadWhichHasNoMessageText() {
+        // ToolResponseMessage.getText() 恒为空，但工具结果是单轮上下文膨胀的最大来源，必须计入
+        ToolResponseMessage toolResponse = ToolResponseMessage.builder()
+                .responses(List.of(new ToolResponseMessage.ToolResponse(
+                        "call_1", "executeSql", "{\"success\":true,\"rowCount\":100,\"data\":[1,2,3]}")))
+                .build();
+
+        assertThat(toolResponse.getText()).isEmpty();
+        assertThat(TokenEstimator.estimate(List.of(toolResponse))).isPositive();
+    }
+
+    @Test
+    void shouldCountAssistantToolCallArguments() {
+        AssistantMessage withoutToolCall = AssistantMessage.builder().content("ok").build();
+        AssistantMessage withToolCall = AssistantMessage.builder()
+                .content("ok")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("call_1", "function", "executeSql",
+                        "{\"dbConfigId\":1,\"sql\":\"SELECT * FROM users WHERE status = 1\"}")))
+                .build();
+
+        assertThat(TokenEstimator.estimate(List.of(withToolCall)))
+                .isGreaterThan(TokenEstimator.estimate(List.of(withoutToolCall)));
     }
 }
