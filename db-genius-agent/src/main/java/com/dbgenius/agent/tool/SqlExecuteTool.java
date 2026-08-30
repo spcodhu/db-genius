@@ -51,6 +51,13 @@ public class SqlExecuteTool {
     @Value("${db-genius.encrypt-key}")
     private String encryptKey;
 
+    /**
+     * 单条语句的执行超时（秒）：防止一条慢 SQL 把整个分钟级的 Agent 轮次拖死。
+     * 超时按统一失败格式返回给 LLM，附带可行动的收窄建议。
+     */
+    @Value("${db-genius.tool.sql-timeout-seconds:30}")
+    private int sqlTimeoutSeconds;
+
     @Tool(description = "Execute a statement on the specified database and return results as JSON. "
             + "For SQL-based databases (MySQL/PostgreSQL/MariaDB/TiDB/Doris/StarRocks/OceanBase/Oracle/SQL Server), "
             + "pass a standard SQL statement matching the target dialect (SELECT/INSERT/UPDATE/DELETE/DDL). "
@@ -133,6 +140,9 @@ public class SqlExecuteTool {
             boolean hasResultSet = adapter.isReadOnlyStatement(sql);
 
             try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                if (sqlTimeoutSeconds > 0) {
+                    stmt.setQueryTimeout(sqlTimeoutSeconds);
+                }
                 if (hasResultSet) {
                     try (ResultSet rs = stmt.executeQuery()) {
                         List<Map<String, Object>> rows = new ArrayList<>();
@@ -163,6 +173,11 @@ public class SqlExecuteTool {
                     return objectMapper.writeValueAsString(result);
                 }
             }
+        } catch (SQLTimeoutException e) {
+            log.warn("SQL execution timed out after {}s: {}", sqlTimeoutSeconds, sql);
+            return failureJson("Statement timed out after " + sqlTimeoutSeconds + " seconds and was cancelled. "
+                    + "Do NOT re-run it unchanged - narrow the scope first: add WHERE/LIMIT, "
+                    + "select fewer columns, or use aggregates (COUNT/SUM/GROUP BY).");
         } catch (SQLException e) {
             log.error("SQL execution failed: {}", e.getMessage());
             Map<String, Object> result = new LinkedHashMap<>();

@@ -40,6 +40,7 @@ Key design points:
 - **Two database roles.** PostgreSQL 16 is the *system* database (users, db configs, conversations, schema `app`). User-managed *target* databases are connected dynamically at runtime through a `DbType` + `DatabaseAdapter` registry.
 - **LLM intent routing.** `IntentClassifier` (structured LLM output) → `IntentHandlerRegistry` (Strategy + Registry, auto-discovered `IntentHandler` beans). New intents are just new beans.
 - **Template-method agent framework.** `BaseAgent → ReActAgent → ToolCallAgent`, with concrete `DbSqlAgent`, `DbWorkflowAgent`, `DbCompareAgent`. `think()` streams model reasoning as SSE `reasoning` events; `act()` executes tools.
+- **Bounded tool output.** Oversized tool results are truncated structurally (row sets are trimmed row-by-row so the payload stays valid JSON) and the full text is parked in a per-task artifact store; the model can page it back with `readToolOutput(artifactId, offset, limit)` instead of blindly re-running the same query. Every database statement runs under a query timeout.
 - **Async backbone.** RabbitMQ drives async connection verification and schema-doc generation; Aliyun OSS stores uploaded files; credentials are encrypted with AES-256-GCM.
 
 ### Supported target databases

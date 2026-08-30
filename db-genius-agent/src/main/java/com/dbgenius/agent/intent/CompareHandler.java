@@ -9,6 +9,9 @@ import com.dbgenius.agent.compress.StepHistoryCondenser;
 import com.dbgenius.agent.tool.DbCompareTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
+import com.dbgenius.agent.tool.ToolOutputReadTool;
+import com.dbgenius.agent.tool.guard.ToolOutputArtifactStore;
+import com.dbgenius.agent.tool.guard.ToolOutputGuard;
 import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.common.exception.BusinessException;
 import com.dbgenius.common.exception.ErrorCode;
@@ -31,7 +34,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -39,6 +41,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
@@ -58,11 +61,10 @@ public class CompareHandler implements IntentHandler {
     private final DbCompareTool dbCompareTool;
     private final SqlExecuteTool sqlExecuteTool;
     private final TerminateTool terminateTool;
+    private final ToolOutputReadTool toolOutputReadTool;
+    private final ToolOutputGuard toolOutputGuard;
     private final StepHistoryCondenser stepHistoryCondenser;
     private final MessageService messageService;
-
-    @Value("${db-genius.context.tool-output-max-chars:4000}")
-    private int toolOutputMaxChars;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -116,7 +118,8 @@ public class CompareHandler implements IntentHandler {
 
         DbCompareAgent agent = new DbCompareAgent(
                 session.reasoningModel(), dbCompareTool, sqlExecuteTool, terminateTool,
-                preDbDoc, testDbDoc, locale);
+                toolOutputReadTool, preDbDoc, testDbDoc,
+                Map.of(ToolOutputArtifactStore.CONTEXT_TASK_ID, taskId), locale);
         agent.setMessageService(messageService);
         agent.setHistoryMessages(historyMessages);
         agent.setExecutor(chatTaskExecutor);
@@ -129,7 +132,7 @@ public class CompareHandler implements IntentHandler {
             usageVO.setConversationTotalTokens(newTotal);
         });
         agent.setStepCondenser(stepHistoryCondenser);
-        agent.setToolOutputMaxChars(toolOutputMaxChars);
+        agent.setToolOutputGuard(toolOutputGuard);
         agent.setMessageSink(new ToolCallAgent.AgentMessageSink() {
             @Override
             public void onAssistant(int step, String content, String reasoningContent, String toolCallsJson) {

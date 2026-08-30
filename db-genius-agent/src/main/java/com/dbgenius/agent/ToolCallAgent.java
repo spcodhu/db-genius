@@ -3,6 +3,7 @@ package com.dbgenius.agent;
 import com.dbgenius.agent.compress.StepHistoryCondenser;
 import com.dbgenius.agent.model.AgentState;
 import com.dbgenius.agent.prompt.PromptTemplateLoader;
+import com.dbgenius.agent.tool.guard.ToolOutputGuard;
 import com.dbgenius.common.i18n.MessageService;
 import com.dbgenius.model.vo.SseEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -66,12 +67,10 @@ public class ToolCallAgent extends ReActAgent {
     protected final ToolCallingManager toolCallingManager;
     protected final ChatOptions chatOptions;
 
-    private static final int DEFAULT_TOOL_OUTPUT_MAX_CHARS = 4000;
-
     private ChatResponse toolCallChatResponse;
     private AgentMessageSink messageSink;
-    /** 工具输出截断安全网阈值（字符数），默认与 db-genius.context.tool-output-max-chars 一致，可通过 setter 覆盖 */
-    private int toolOutputMaxChars = DEFAULT_TOOL_OUTPUT_MAX_CHARS;
+    /** 工具输出超长拦截器（始终生效）：默认用一份独立默认实例，生产由 Handler 注入 Spring 管理的单例 */
+    private ToolOutputGuard toolOutputGuard = ToolOutputGuard.withDefaults();
     /** 单轮内步骤历史压缩器，默认不装配（null），行为与现状一致 */
     private StepHistoryCondenser stepCondenser;
     /** 本轮 Agent 生成内容在 messageList 中的起始下标（历史消息 + 当前用户输入之后），由 onStepStart 记录 */
@@ -111,8 +110,10 @@ public class ToolCallAgent extends ReActAgent {
         this.messageSink = messageSink;
     }
 
-    public void setToolOutputMaxChars(int toolOutputMaxChars) {
-        this.toolOutputMaxChars = toolOutputMaxChars;
+    public void setToolOutputGuard(ToolOutputGuard toolOutputGuard) {
+        if (toolOutputGuard != null) {
+            this.toolOutputGuard = toolOutputGuard;
+        }
     }
 
     public void setStepCondenser(StepHistoryCondenser stepCondenser) {
@@ -255,31 +256,19 @@ public class ToolCallAgent extends ReActAgent {
     }
 
     /**
-     * 对一步工具执行结果做截断安全网：逐条检查 {@link ToolResponseMessage.ToolResponse#responseData()}，
-     * 超过 {@link #toolOutputMaxChars} 则替换为"头部预览 + 尾部预览 + 已省略字符数"的形式。
+     * 对一步工具执行结果做超长拦截：逐条交给 {@link ToolOutputGuard} 做结构感知截断
+     * （行集按行裁、其余封装为合法 JSON 信封），并把完整原文登记进制品仓换取 artifactId，
+     * 模型可用 {@code readToolOutput} 分页取回，避免「看不到数据 → 重试同一条语句」的死循环。
      */
     private ToolResponseMessage truncateToolResponses(ToolResponseMessage original) {
-        List<ToolResponseMessage.ToolResponse> truncated = original.getResponses().stream()
-                .map(this::truncateToolResponse)
+        List<ToolResponseMessage.ToolResponse> guarded = original.getResponses().stream()
+                .map(response -> {
+                    String bounded = toolOutputGuard.guard(taskId, response.name(), response.responseData());
+                    return bounded == null || bounded.equals(response.responseData()) ? response
+                            : new ToolResponseMessage.ToolResponse(response.id(), response.name(), bounded);
+                })
                 .toList();
-        return ToolResponseMessage.builder().responses(truncated).build();
-    }
-
-    private ToolResponseMessage.ToolResponse truncateToolResponse(ToolResponseMessage.ToolResponse response) {
-        String data = response.responseData();
-        if (data == null || data.length() <= toolOutputMaxChars) {
-            return response;
-        }
-        int headLen = toolOutputMaxChars * 2 / 3;
-        int tailLen = Math.max(0, toolOutputMaxChars - headLen);
-        String head = data.substring(0, headLen);
-        String tail = tailLen > 0 ? data.substring(data.length() - tailLen) : "";
-        int omitted = data.length() - head.length() - tail.length();
-        String preview = head + "\n...(已省略 " + omitted + " 字符，工具 " + response.name()
-                + " 原始结果共 " + data.length() + " 字符，已截断以避免 context 膨胀)...\n" + tail;
-        log.warn("[{}] Truncated oversized tool response from '{}': {} -> {} chars",
-                name, response.name(), data.length(), preview.length());
-        return new ToolResponseMessage.ToolResponse(response.id(), response.name(), preview);
+        return ToolResponseMessage.builder().responses(guarded).build();
     }
 
     /**
@@ -475,5 +464,19 @@ public class ToolCallAgent extends ReActAgent {
                 .map(Message::getText)
                 .orElse("Task completed.");
         return "## Summary\n\n" + lastResult;
+    }
+
+    /**
+     * 运行结束（正常完成 / 异常 / SSE 超时或断开）时释放本任务登记的工具输出制品，
+     * 避免长会话与异常中断堆积内存。制品仓另有 TTL 兜底，此处是主动路径。
+     */
+    @Override
+    protected void cleanup() {
+        try {
+            toolOutputGuard.evictTask(taskId);
+        } catch (Exception e) {
+            log.warn("[{}] Failed to evict tool output artifacts: {}", name, e.getMessage());
+        }
+        super.cleanup();
     }
 }

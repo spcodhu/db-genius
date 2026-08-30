@@ -33,6 +33,9 @@ public final class PromptTemplateLoader {
     /** system 段与 user 段的分隔标记（独占一行） */
     private static final String USER_SECTION_DELIMITER = "===USER===";
 
+    /** 「上下文与超长输出约定」公共片段模板名，由 {@link #withContextPolicy} 追加到各 Agent 系统提示词 */
+    private static final String CONTEXT_POLICY_TEMPLATE = "_context-policy";
+
     private static final Map<String, String> CACHE = new ConcurrentHashMap<>();
 
     /** locale → 输出语言显式指令使用的语言名 */
@@ -112,6 +115,18 @@ public final class PromptTemplateLoader {
      */
     public static String withOutputLanguage(String systemPrompt, Locale locale) {
         return systemPrompt + "\n\nYou MUST respond in " + outputLanguageName(locale) + ".";
+    }
+
+    /**
+     * 在 system prompt 尾部拼接「上下文与超长输出约定」小节（模板 {@code prompts/_context-policy_*.md}）。
+     *
+     * <p>与模型约定 {@code [TRUNCATED:TOOL_OUTPUT_TOO_LONG]} / {@code [ELIDED:STALE_OBSERVATION]}
+     * 两个占位标记的语义与正确应对方式：这是系统行为而非数据错误，不要重复执行同一条语句，
+     * 而应收窄查询或用 {@code readToolOutput} 分页取回。所有带工具的 Agent 都应追加此小节，
+     * 否则截断会直接把模型推向无限重试。</p>
+     */
+    public static String withContextPolicy(String systemPrompt, Locale locale) {
+        return systemPrompt + "\n\n" + load(CONTEXT_POLICY_TEMPLATE, locale).strip();
     }
 
     private static String readResource(String path) {

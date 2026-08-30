@@ -4,6 +4,7 @@ import com.dbgenius.agent.prompt.PromptTemplateLoader;
 import com.dbgenius.agent.tool.DbCompareTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
+import com.dbgenius.agent.tool.ToolOutputReadTool;
 import com.dbgenius.model.vo.SseEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -18,17 +19,21 @@ public class DbCompareAgent extends ToolCallAgent {
 
     public DbCompareAgent(ReasoningChatModel reasoningChatModel,
                           DbCompareTool dbCompareTool, SqlExecuteTool sqlExecuteTool,
-                          TerminateTool terminateTool, String preDbDoc, String testDbDoc,
-                          Locale locale) {
+                          TerminateTool terminateTool,
+                          ToolOutputReadTool toolOutputReadTool,
+                          String preDbDoc, String testDbDoc,
+                          Map<String, Object> toolContext, Locale locale) {
         super(
                 "DbCompareAgent",
                 buildSystemPrompt(preDbDoc, testDbDoc, locale),
                 "Continue the comparison. If structures have been compared, analyze the differences and generate the deployment SQL. When done, call doTerminate.",
                 15,
                 reasoningChatModel,
+                toolContext,
                 dbCompareTool,
                 sqlExecuteTool,
-                terminateTool
+                terminateTool,
+                toolOutputReadTool
         );
         setLocale(locale);
     }
@@ -45,6 +50,7 @@ public class DbCompareAgent extends ToolCallAgent {
         String prompt = PromptTemplateLoader.render(template, Map.of(
                 "preSchema", preDbDoc,
                 "testSchema", testDbDoc));
-        return PromptTemplateLoader.withOutputLanguage(prompt, locale);
+        return PromptTemplateLoader.withOutputLanguage(
+                PromptTemplateLoader.withContextPolicy(prompt, locale), locale);
     }
 }

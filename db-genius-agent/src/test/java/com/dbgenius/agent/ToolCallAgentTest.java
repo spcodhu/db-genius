@@ -1,5 +1,6 @@
 package com.dbgenius.agent;
 
+import com.dbgenius.agent.tool.guard.ToolOutputGuard;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +16,7 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 
@@ -222,7 +224,7 @@ class ToolCallAgentTest {
         ToolCallAgent agent = new ToolCallAgent("TestAgent", "system", null, 1,
                 reasoningChatModel, new BigOutputTool());
         agent.setMessageSink(sink);
-        agent.setToolOutputMaxChars(100);
+        agent.setToolOutputGuard(guardWithMaxChars(400));
         agent.setExecutor(Runnable::run);
         agent.runStream("give me a huge blob");
 
@@ -232,13 +234,25 @@ class ToolCallAgentTest {
         JsonNode responses = objectMapper.readTree(responsesCaptor.getValue());
         assertThat(responses.get(0).get("result").asText().length()).isGreaterThan(6000);
 
-        // messageList（下一次发给模型的 prompt）中的版本已被截断
+        // messageList（下一次发给模型的 prompt）中的版本已被截断，且仍是合法 JSON 信封
         List<Message> messageList = agent.getMessageList();
         Message last = messageList.get(messageList.size() - 1);
         assertThat(last).isInstanceOf(ToolResponseMessage.class);
         String truncatedData = ((ToolResponseMessage) last).getResponses().get(0).responseData();
-        assertThat(truncatedData.length()).isLessThan(500);
-        assertThat(truncatedData).contains("已省略");
+        assertThat(truncatedData.length()).isLessThan(6000);
+        JsonNode envelope = objectMapper.readTree(truncatedData);
+        assertThat(envelope.get("truncated").asBoolean()).isTrue();
+        assertThat(envelope.get("notice").asText()).contains(ToolOutputGuard.TRUNCATED_PREFIX);
+        assertThat(envelope.get("artifactId").asText()).isNotBlank();
+    }
+
+    /** 构造一个指定字符上限的 guard（生产由 Spring 注入 @Value，此处直接改字段）。 */
+    private ToolOutputGuard guardWithMaxChars(int maxChars) throws Exception {
+        ToolOutputGuard guard = ToolOutputGuard.withDefaults();
+        Field field = ToolOutputGuard.class.getDeclaredField("maxChars");
+        field.setAccessible(true);
+        field.setInt(guard, maxChars);
+        return guard;
     }
 
     private ChatResponse responseOf(AssistantMessage assistant) {

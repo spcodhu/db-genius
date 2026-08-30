@@ -10,6 +10,9 @@ import com.dbgenius.agent.tool.FileReadTool;
 import com.dbgenius.agent.tool.ImageReadTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
+import com.dbgenius.agent.tool.ToolOutputReadTool;
+import com.dbgenius.agent.tool.guard.ToolOutputArtifactStore;
+import com.dbgenius.agent.tool.guard.ToolOutputGuard;
 import com.dbgenius.agent.tool.file.FileAccessGuard;
 import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.common.exception.BusinessException;
@@ -34,12 +37,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -65,11 +68,10 @@ public class WorkflowHandler implements IntentHandler {
     private final FileReadTool fileReadTool;
     private final ImageReadTool imageReadTool;
     private final TerminateTool terminateTool;
+    private final ToolOutputReadTool toolOutputReadTool;
+    private final ToolOutputGuard toolOutputGuard;
     private final StepHistoryCondenser stepHistoryCondenser;
     private final MessageService messageService;
-
-    @Value("${db-genius.context.tool-output-max-chars:4000}")
-    private int toolOutputMaxChars;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -107,7 +109,9 @@ public class WorkflowHandler implements IntentHandler {
 
         boolean hasFiles = request.getFileIds() != null && !request.getFileIds().isEmpty();
         String enhancedMessage = request.getMessage();
-        Map<String, Object> toolContext = Map.of();
+        // taskId 始终随 ToolContext 下传（LLM 不可见），供 readToolOutput 定位本任务的工具输出制品
+        Map<String, Object> toolContext = new LinkedHashMap<>();
+        toolContext.put(ToolOutputArtifactStore.CONTEXT_TASK_ID, taskId);
         if (hasFiles) {
             // 入口属主校验：任一文件不属于该用户即抛 403/404，整个请求拒绝
             List<UploadedFile> files = request.getFileIds().stream()
@@ -119,9 +123,8 @@ public class WorkflowHandler implements IntentHandler {
                     .collect(Collectors.joining(", "));
             enhancedMessage += "\n\n[Attached files: " + fileRefs + "]";
             // userId 与允许访问的文件集合经 ToolContext 在 LLM 上下文之外传递给 readFile/readImage
-            toolContext = Map.of(
-                    FileAccessGuard.CONTEXT_USER_ID, userId,
-                    FileAccessGuard.CONTEXT_ALLOWED_FILE_IDS, Set.copyOf(request.getFileIds()));
+            toolContext.put(FileAccessGuard.CONTEXT_USER_ID, userId);
+            toolContext.put(FileAccessGuard.CONTEXT_ALLOWED_FILE_IDS, Set.copyOf(request.getFileIds()));
         }
 
         ChatModelSession session = chatModelFactory.createSession(
@@ -129,7 +132,7 @@ public class WorkflowHandler implements IntentHandler {
 
         DbWorkflowAgent agent = new DbWorkflowAgent(
                 session.reasoningModel(), sqlExecuteTool, fileReadTool, imageReadTool, terminateTool,
-                dbDoc, hasFiles, toolContext, locale);
+                toolOutputReadTool, dbDoc, hasFiles, Map.copyOf(toolContext), locale);
         agent.setMessageService(messageService);
         agent.setHistoryMessages(historyMessages);
         agent.setExecutor(chatTaskExecutor);
@@ -142,7 +145,7 @@ public class WorkflowHandler implements IntentHandler {
             usageVO.setConversationTotalTokens(newTotal);
         });
         agent.setStepCondenser(stepHistoryCondenser);
-        agent.setToolOutputMaxChars(toolOutputMaxChars);
+        agent.setToolOutputGuard(toolOutputGuard);
         agent.setMessageSink(new ToolCallAgent.AgentMessageSink() {
             @Override
             public void onAssistant(int step, String content, String reasoningContent, String toolCallsJson) {

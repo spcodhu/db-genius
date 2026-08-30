@@ -106,8 +106,21 @@ db-genius:
       enabled: ${DB_GENIUS_IN_RUN_COMPRESS_ENABLED:false}
       threshold: ${DB_GENIUS_IN_RUN_COMPRESS_THRESHOLD:0.7}
       keep-last-steps: ${DB_GENIUS_IN_RUN_COMPRESS_KEEP_LAST_STEPS:4}
-    # 工具输出截断安全网：始终生效，不受任何开关限制。防止单条工具结果（如大结果集）过大。
-    tool-output-max-chars: ${DB_GENIUS_TOOL_OUTPUT_MAX_CHARS:4000}
+    # 工具输出超长拦截器：始终生效，不受任何开关限制。防止单条工具结果（如大结果集）撑爆上下文。
+    # 截断为结构感知（行集按行裁剪，保证产出仍是合法 JSON），完整原文登记进 per-task 制品仓，
+    # 模型可用 readToolOutput(artifactId, offset, limit) 分页取回，避免截断诱发无限重试。
+    tool-output:
+      max-chars: ${DB_GENIUS_TOOL_OUTPUT_MAX_CHARS:4000}
+      # 行集裁剪时最多保留的行数（与 max-chars 共同约束，先到先止）
+      max-rows: ${DB_GENIUS_TOOL_OUTPUT_MAX_ROWS:50}
+      # 按工具名覆盖上限，形如 compareDatabases=8000,readFile=6000；留空表示全部走 max-chars
+      per-tool-max-chars: ${DB_GENIUS_TOOL_OUTPUT_PER_TOOL_MAX_CHARS:}
+      # 制品仓兜底 TTL 与单任务容量；正常路径由 Agent cleanup 主动释放
+      artifact-ttl-minutes: ${DB_GENIUS_TOOL_ARTIFACT_TTL_MINUTES:30}
+      artifact-max-per-task: ${DB_GENIUS_TOOL_ARTIFACT_MAX_PER_TASK:20}
+  tool:
+    # 单条数据库语句的执行超时（秒）：JDBC 走 setQueryTimeout，MongoDB 走 maxTimeMS
+    sql-timeout-seconds: ${DB_GENIUS_SQL_TIMEOUT_SECONDS:30}
 
 logging:
   level:

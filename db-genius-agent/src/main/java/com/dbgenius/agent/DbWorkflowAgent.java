@@ -5,6 +5,7 @@ import com.dbgenius.agent.tool.FileReadTool;
 import com.dbgenius.agent.tool.ImageReadTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
+import com.dbgenius.agent.tool.ToolOutputReadTool;
 import com.dbgenius.model.vo.SseEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -25,6 +26,7 @@ public class DbWorkflowAgent extends ToolCallAgent {
                            SqlExecuteTool sqlExecuteTool,
                            FileReadTool fileReadTool, ImageReadTool imageReadTool,
                            TerminateTool terminateTool,
+                           ToolOutputReadTool toolOutputReadTool,
                            String dbDocContext, boolean hasFiles,
                            Map<String, Object> toolContext, Locale locale) {
         super(
@@ -37,7 +39,8 @@ public class DbWorkflowAgent extends ToolCallAgent {
                 sqlExecuteTool,
                 fileReadTool,
                 imageReadTool,
-                terminateTool
+                terminateTool,
+                toolOutputReadTool
         );
         this.dbDocContext = dbDocContext;
         this.hasFiles = hasFiles;
@@ -59,7 +62,8 @@ public class DbWorkflowAgent extends ToolCallAgent {
         String prompt = PromptTemplateLoader.render(template, Map.of(
                 "fileSection", fileSection,
                 "schema", dbDoc));
-        return PromptTemplateLoader.withOutputLanguage(prompt, locale);
+        return PromptTemplateLoader.withOutputLanguage(
+                PromptTemplateLoader.withContextPolicy(prompt, locale), locale);
     }
 
     private static String buildNextStepPrompt(boolean hasFiles) {

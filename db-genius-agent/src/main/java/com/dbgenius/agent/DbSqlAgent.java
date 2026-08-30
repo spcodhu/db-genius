@@ -3,6 +3,7 @@ package com.dbgenius.agent;
 import com.dbgenius.agent.prompt.PromptTemplateLoader;
 import com.dbgenius.agent.tool.SqlExecuteTool;
 import com.dbgenius.agent.tool.TerminateTool;
+import com.dbgenius.agent.tool.ToolOutputReadTool;
 import com.dbgenius.model.vo.SseEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -19,15 +20,19 @@ public class DbSqlAgent extends ToolCallAgent {
 
     public DbSqlAgent(ReasoningChatModel reasoningChatModel,
                       SqlExecuteTool sqlExecuteTool, TerminateTool terminateTool,
-                      String dbDocContext, String dialectContext, Locale locale) {
+                      ToolOutputReadTool toolOutputReadTool,
+                      String dbDocContext, String dialectContext,
+                      Map<String, Object> toolContext, Locale locale) {
         super(
                 "DbSqlAgent",
                 buildSystemPrompt(dbDocContext, dialectContext, locale),
                 "Based on the user's request, analyze the intent, generate the appropriate SQL, execute it, and report the results. When done, call doTerminate.",
                 10,
                 reasoningChatModel,
+                toolContext,
                 sqlExecuteTool,
-                terminateTool
+                terminateTool,
+                toolOutputReadTool
         );
         this.dbDocContext = dbDocContext;
         setLocale(locale);
@@ -45,6 +50,7 @@ public class DbSqlAgent extends ToolCallAgent {
         String prompt = PromptTemplateLoader.render(template, Map.of(
                 "dialect", dialectContext,
                 "schema", dbDoc));
-        return PromptTemplateLoader.withOutputLanguage(prompt, locale);
+        return PromptTemplateLoader.withOutputLanguage(
+                PromptTemplateLoader.withContextPolicy(prompt, locale), locale);
     }
 }

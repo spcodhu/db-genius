@@ -15,9 +15,11 @@ import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.CountOptions;
 import lombok.extern.slf4j.Slf4j;
 import org.bson.BsonType;
 import org.bson.Document;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.net.URLEncoder;
@@ -26,6 +28,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -47,6 +50,13 @@ public class MongoDbAdapter implements DatabaseAdapter {
 
     /** find/aggregate 返回文档数的硬性上限，防止大结果集撑爆上下文 */
     private static final int MAX_LIMIT = 100;
+
+    /**
+     * 单条命令的服务端执行超时（秒，maxTimeMS）：与 JDBC 的 setQueryTimeout 对齐，
+     * 防止一条慢查询把整个 Agent 轮次拖死。
+     */
+    @Value("${db-genius.tool.sql-timeout-seconds:30}")
+    private long commandTimeoutSeconds = 30;
 
     @Override
     public DbType getType() {
@@ -189,17 +199,20 @@ public class MongoDbAdapter implements DatabaseAdapter {
                     // limit 缺省 100，且硬性钳制在 [1, 100]
                     int limit = clamp(command.getInteger("limit", MAX_LIMIT));
                     List<Document> results = new ArrayList<>();
-                    collection.find(filter).limit(limit).into(results);
+                    collection.find(filter).limit(limit)
+                            .maxTime(commandTimeoutSeconds, TimeUnit.SECONDS).into(results);
                     yield results.stream().map(Document::toJson).collect(Collectors.joining(",", "[", "]"));
                 }
-                case "count" -> String.valueOf(collection.countDocuments(filter));
+                case "count" -> String.valueOf(collection.countDocuments(filter,
+                        new CountOptions().maxTime(commandTimeoutSeconds, TimeUnit.SECONDS)));
                 case "distinct" -> {
                     String field = command.getString("field");
                     if (!hasText(field)) {
                         throw new BusinessException(400, "MongoDB distinct command requires 'field'");
                     }
                     List<Object> values = new ArrayList<>();
-                    collection.distinct(field, filter, Object.class).into(values);
+                    collection.distinct(field, filter, Object.class)
+                            .maxTime(commandTimeoutSeconds, TimeUnit.SECONDS).into(values);
                     // 借 Document 的编解码能力把任意 BSON 值序列化为 JSON
                     yield new Document("values", values).toJson();
                 }
@@ -207,7 +220,8 @@ public class MongoDbAdapter implements DatabaseAdapter {
                     List<Document> pipeline = command.getList("pipeline", Document.class, List.of());
                     assertPipelineReadOnly(pipeline);
                     List<Document> results = new ArrayList<>();
-                    collection.aggregate(pipeline).into(results);
+                    collection.aggregate(pipeline)
+                            .maxTime(commandTimeoutSeconds, TimeUnit.SECONDS).into(results);
                     yield results.stream().map(Document::toJson).collect(Collectors.joining(",", "[", "]"));
                 }
                 default -> throw new BusinessException(400, "Unsupported MongoDB operation: " + operation);
