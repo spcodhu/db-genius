@@ -37,6 +37,14 @@ public class ChatModelFactory {
     @Value("${db-genius.encrypt-key}")
     private String encryptKey;
 
+    /**
+     * Tier-2 单轮内瘦身：只回传最后一条 assistant 消息的 reasoning_content。
+     * 收益很大（单轮多步 ReAct 中历史 reasoning 是上下文大头），但各供应商对缺失历史
+     * reasoning 的容忍度不一（可能 400），因此默认关闭、灰度打开。
+     */
+    @Value("${db-genius.context.in-run.drop-stale-reasoning.enabled:false}")
+    private boolean dropStaleReasoning;
+
     public ChatModelFactory(RestClient.Builder restClientBuilder,
                             WebClient.Builder webClientBuilder,
                             ToolCallingManager toolCallingManager) {
@@ -92,6 +100,7 @@ public class ChatModelFactory {
 
         ReasoningChatModel reasoningModel = new ReasoningChatModel(
                 openAiApi, chatModel, chatProperties, toolCallingManager);
+        reasoningModel.setDropStaleReasoning(dropStaleReasoning);
 
         ChatModel effectiveChatModel = chatModel;
         if (accumulator != null) {

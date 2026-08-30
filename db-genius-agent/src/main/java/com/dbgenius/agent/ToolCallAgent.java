@@ -3,6 +3,7 @@ package com.dbgenius.agent;
 import com.dbgenius.agent.compress.ContextCompactListener;
 import com.dbgenius.agent.compress.ObservationElider;
 import com.dbgenius.agent.compress.StepHistoryCondenser;
+import com.dbgenius.agent.guard.LoopBreaker;
 import com.dbgenius.agent.model.AgentState;
 import com.dbgenius.agent.prompt.PromptTemplateLoader;
 import com.dbgenius.agent.tool.guard.ToolOutputGuard;
@@ -78,6 +79,10 @@ public class ToolCallAgent extends ReActAgent {
     private StepHistoryCondenser stepCondenser;
     /** 单轮内确定性观测遮蔽（Tier-1，零 LLM 成本），默认不装配（null） */
     private ObservationElider observationElider;
+    /** 死循环护栏（单次运行内状态），默认不装配（null），行为与现状一致 */
+    private LoopBreaker loopBreaker;
+    /** 本步是否发生过工具输出截断，供 LoopBreaker 累计计数 */
+    private boolean truncatedThisStep;
     /** 本轮 Agent 生成内容在 messageList 中的起始下标（历史消息 + 当前用户输入之后），由 onStepStart 记录 */
     private int turnStartIndex;
     /** 本轮请求的语言环境：驱动 prompt 模板选择与总结输出语言，由具体 Agent 构造时设置 */
@@ -127,6 +132,10 @@ public class ToolCallAgent extends ReActAgent {
 
     public void setObservationElider(ObservationElider observationElider) {
         this.observationElider = observationElider;
+    }
+
+    public void setLoopBreaker(LoopBreaker loopBreaker) {
+        this.loopBreaker = loopBreaker;
     }
 
     /**
@@ -304,6 +313,16 @@ public class ToolCallAgent extends ReActAgent {
             return rejectInvalidArgumentCalls(calls);
         }
 
+        // 死循环护栏：同一 (工具名 + 参数) 反复调用时不再真正执行，改为可行动的改变策略指引。
+        // 常见触发场景是工具输出被截断或语句超时后模型原样重试，只靠 maxSteps 兜底
+        // 意味着用户要为整整一轮无效模型调用付费并等待。
+        if (loopBreaker != null) {
+            List<String> blocked = loopBreaker.inspect(calls);
+            if (!blocked.isEmpty()) {
+                return rejectBlockedCalls(calls, blocked);
+            }
+        }
+
         Prompt prompt = new Prompt(messageList, chatOptions);
         ToolExecutionResult toolExecutionResult = toolCallingManager.executeToolCalls(prompt, toolCallChatResponse);
 
@@ -327,6 +346,12 @@ public class ToolCallAgent extends ReActAgent {
             log.info("[{}] Terminate tool called, finishing", name);
         }
 
+        // 多次截断后注入一次「改用聚合/分页」的系统指引：必须在 tool_response 之后追加，
+        // 保证 assistant → tool → user 的消息顺序合法
+        if (loopBreaker != null && truncatedThisStep && loopBreaker.recordTruncationAndNeedsHint()) {
+            messageList.add(new UserMessage(loopBreaker.narrowingHint()));
+        }
+
         String results = toolResponseMessage.getResponses().stream()
                 .map(response -> "Tool " + response.name() + " result: " + response.responseData())
                 .collect(Collectors.joining("\n"));
@@ -347,14 +372,49 @@ public class ToolCallAgent extends ReActAgent {
      * 模型可用 {@code readToolOutput} 分页取回，避免「看不到数据 → 重试同一条语句」的死循环。
      */
     private ToolResponseMessage truncateToolResponses(ToolResponseMessage original) {
+        truncatedThisStep = false;
         List<ToolResponseMessage.ToolResponse> guarded = original.getResponses().stream()
                 .map(response -> {
                     String bounded = toolOutputGuard.guard(taskId, response.name(), response.responseData());
-                    return bounded == null || bounded.equals(response.responseData()) ? response
-                            : new ToolResponseMessage.ToolResponse(response.id(), response.name(), bounded);
+                    if (bounded == null || bounded.equals(response.responseData())) {
+                        return response;
+                    }
+                    truncatedThisStep = true;
+                    return new ToolResponseMessage.ToolResponse(response.id(), response.name(), bounded);
                 })
                 .toList();
         return ToolResponseMessage.builder().responses(guarded).build();
+    }
+
+    /**
+     * 重复调用护栏的执行体：不真实执行，手工把 assistant 输出与合成的 ToolResponseMessage
+     * （id 与 tool call 一致）写入 messageList。触发硬熔断时追加收尾指引并把 maxSteps 收敛到
+     * 当前步 + 1——<b>仍走正常的 onFinish/summary 流程优雅收尾</b>，而不是抛错中断。
+     */
+    private String rejectBlockedCalls(List<AssistantMessage.ToolCall> calls, List<String> feedback) {
+        messageList.add(toolCallChatResponse.getResult().getOutput());
+        List<ToolResponseMessage.ToolResponse> responses = new ArrayList<>(calls.size());
+        for (int i = 0; i < calls.size(); i++) {
+            AssistantMessage.ToolCall call = calls.get(i);
+            responses.add(new ToolResponseMessage.ToolResponse(call.id(), call.name(), feedback.get(i)));
+        }
+        messageList.add(ToolResponseMessage.builder().responses(responses).build());
+
+        if (loopBreaker.isHardStopTriggered()) {
+            messageList.add(new UserMessage(loopBreaker.hardStopHint()));
+            int convergedMaxSteps = Math.min(maxSteps, currentStep + 1);
+            if (convergedMaxSteps != maxSteps) {
+                log.warn("[{}] Hard stop triggered, converging maxSteps {} -> {}", name, maxSteps, convergedMaxSteps);
+                maxSteps = convergedMaxSteps;
+            }
+        }
+
+        if (messageSink != null) {
+            messageSink.onToolResponses(currentStep, toToolResponsesJson(responses));
+        }
+        return responses.stream()
+                .map(response -> "Tool " + response.name() + " result: " + response.responseData())
+                .collect(Collectors.joining("\n"));
     }
 
     /**

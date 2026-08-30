@@ -233,4 +233,59 @@ class ReasoningChatModelTest {
                 1719648000L, "deepseek-v4-pro", null, null, "chat.completion", null);
         when(openAiApi.chatCompletionEntity(any())).thenReturn(ResponseEntity.ok(completion));
     }
+
+    @Test
+    void shouldKeepAllReasoningWhenDropStaleReasoningDisabled() {
+        stubChatCompletion("ok", null);
+
+        chatModel.call(new Prompt(List.of(
+                new UserMessage("第一问"),
+                assistantWithReasoning("旧的推理", "call_1"),
+                toolResponse("call_1"),
+                assistantWithReasoning("新的推理", "call_2"),
+                toolResponse("call_2"))));
+
+        ArgumentCaptor<ChatCompletionRequest> captor = ArgumentCaptor.forClass(ChatCompletionRequest.class);
+        verify(openAiApi).chatCompletionEntity(captor.capture());
+        List<ChatCompletionMessage> messages = captor.getValue().messages();
+        assertThat(messages.get(1).reasoningContent()).isEqualTo("旧的推理");
+        assertThat(messages.get(3).reasoningContent()).isEqualTo("新的推理");
+    }
+
+    @Test
+    void shouldOnlyKeepLastAssistantReasoningWhenDropStaleReasoningEnabled() {
+        chatModel.setDropStaleReasoning(true);
+        stubChatCompletion("ok", null);
+
+        chatModel.call(new Prompt(List.of(
+                new UserMessage("第一问"),
+                assistantWithReasoning("旧的推理", "call_1"),
+                toolResponse("call_1"),
+                assistantWithReasoning("新的推理", "call_2"),
+                toolResponse("call_2"))));
+
+        ArgumentCaptor<ChatCompletionRequest> captor = ArgumentCaptor.forClass(ChatCompletionRequest.class);
+        verify(openAiApi).chatCompletionEntity(captor.capture());
+        List<ChatCompletionMessage> messages = captor.getValue().messages();
+        // 历史 reasoning 被丢弃，只有最后一条 assistant 保留（DeepSeek 的硬性要求只针对紧邻的 tool-call 轮次）
+        assertThat(messages.get(1).reasoningContent()).isNull();
+        assertThat(messages.get(3).reasoningContent()).isEqualTo("新的推理");
+        // tool_calls 与消息结构不受影响
+        assertThat(messages.get(1).toolCalls()).hasSize(1);
+        assertThat(messages).hasSize(5);
+    }
+
+    private AssistantMessage assistantWithReasoning(String reasoning, String callId) {
+        return AssistantMessage.builder()
+                .content("")
+                .properties(Map.of(ReasoningChatModel.REASONING_CONTENT_KEY, reasoning))
+                .toolCalls(List.of(new AssistantMessage.ToolCall(callId, "function", "executeSql", "{}")))
+                .build();
+    }
+
+    private ToolResponseMessage toolResponse(String callId) {
+        return ToolResponseMessage.builder()
+                .responses(List.of(new ToolResponseMessage.ToolResponse(callId, "executeSql", "rows: 1")))
+                .build();
+    }
 }

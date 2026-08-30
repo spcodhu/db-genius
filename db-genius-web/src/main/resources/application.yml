@@ -114,6 +114,16 @@ db-genius:
         enabled: ${DB_GENIUS_IN_RUN_SUMMARIZE_ENABLED:true}
         threshold: ${DB_GENIUS_IN_RUN_SUMMARIZE_THRESHOLD:0.8}
         keep-last-steps: ${DB_GENIUS_IN_RUN_SUMMARIZE_KEEP_LAST_STEPS:4}
+      # Tier-2 陈旧 reasoning 丢弃：只回传最后一条 assistant 的 reasoning_content。
+      # 收益很大但各供应商容忍度不一（可能 400），默认关闭，灰度验证后再打开。
+      drop-stale-reasoning:
+        enabled: ${DB_GENIUS_IN_RUN_DROP_STALE_REASONING:false}
+    # 死循环护栏：同一 (工具名 + 参数) 反复调用时拦截并要求改变策略；
+    # 超过硬停阈值即收敛 maxSteps，仍走正常 summary 流程优雅收尾，不抛错。
+    loop-breaker:
+      repeat-threshold: ${DB_GENIUS_LOOP_REPEAT_THRESHOLD:3}
+      hard-stop-repeat: ${DB_GENIUS_LOOP_HARD_STOP_REPEAT:5}
+      truncation-hint-threshold: ${DB_GENIUS_LOOP_TRUNCATION_HINT:3}
     # 工具输出超长拦截器：始终生效，不受任何开关限制。防止单条工具结果（如大结果集）撑爆上下文。
     # 截断为结构感知（行集按行裁剪，保证产出仍是合法 JSON），完整原文登记进 per-task 制品仓，
     # 模型可用 readToolOutput(artifactId, offset, limit) 分页取回，避免截断诱发无限重试。

@@ -1,5 +1,7 @@
 package com.dbgenius.agent;
 
+import com.dbgenius.agent.guard.LoopBreaker;
+import com.dbgenius.agent.model.AgentState;
 import com.dbgenius.agent.tool.guard.ToolOutputGuard;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -259,5 +261,36 @@ class ToolCallAgentTest {
         return new ChatResponse(
                 List.of(new Generation(assistant, ChatGenerationMetadata.builder().build())),
                 ChatResponseMetadata.builder().build());
+    }
+
+    @Test
+    void shouldBlockRepeatedToolCallsAndConvergeGracefully() {
+        AssistantMessage assistant = AssistantMessage.builder()
+                .content("再查一次")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("call_1", "function", "echo",
+                        "{\"text\":\"hello\"}")))
+                .build();
+        when(reasoningChatModel.streamAggregated(any(), any())).thenReturn(responseOf(assistant));
+
+        // repeatThreshold=2：第 2 次相同调用即拦截；hardStopRepeat=2：同时触发硬熔断
+        ToolCallAgent agent = new ToolCallAgent("TestAgent", "system", null, 5,
+                reasoningChatModel, new EchoTool());
+        agent.setLoopBreaker(new LoopBreaker(2, 2, 3));
+        agent.setExecutor(Runnable::run);
+        agent.runStream("echo hello");
+
+        List<Message> messageList = agent.getMessageList();
+        String blockedFeedback = messageList.stream()
+                .filter(ToolResponseMessage.class::isInstance)
+                .map(m -> ((ToolResponseMessage) m).getResponses().get(0).responseData())
+                .filter(data -> data.contains("REPEATED_CALL"))
+                .findFirst()
+                .orElse(null);
+        assertThat(blockedFeedback).isNotNull();
+
+        // 硬熔断后注入收尾指引，并把 maxSteps 收敛，保证走正常 summary 流程而非报错中断
+        assertThat(messageList.get(messageList.size() - 1).getText()).contains("doTerminate");
+        assertThat(agent.getMaxSteps()).isLessThan(5);
+        assertThat(agent.getState()).isEqualTo(AgentState.FINISHED);
     }
 }

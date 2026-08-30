@@ -33,6 +33,7 @@ import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -105,6 +106,12 @@ public class ReasoningChatModel implements ChatModel {
     /** 本轮请求的 token 用量累加器，由 ChatModelFactory 注入，可为 null（不记账） */
     private TokenUsageAccumulator tokenUsageAccumulator;
 
+    /**
+     * 是否只回传最后一条 assistant 消息的 reasoning_content（Tier-2 单轮内瘦身，默认关闭）。
+     * 由 ChatModelFactory 按配置注入；各供应商对缺失历史 reasoning 的容忍度不一，需灰度验证。
+     */
+    private boolean dropStaleReasoning;
+
     public ReasoningChatModel(OpenAiApi openAiApi, OpenAiChatModel delegate,
                               OpenAiChatProperties chatProperties, ToolCallingManager toolCallingManager) {
         this.openAiApi = openAiApi;
@@ -115,6 +122,10 @@ public class ReasoningChatModel implements ChatModel {
 
     public void setTokenUsageAccumulator(TokenUsageAccumulator tokenUsageAccumulator) {
         this.tokenUsageAccumulator = tokenUsageAccumulator;
+    }
+
+    public void setDropStaleReasoning(boolean dropStaleReasoning) {
+        this.dropStaleReasoning = dropStaleReasoning;
     }
 
     @Override
@@ -318,10 +329,12 @@ public class ReasoningChatModel implements ChatModel {
 
     private ChatCompletionRequest createRequest(List<Message> instructions, OpenAiChatOptions requestOptions,
                                                 boolean stream) {
-        List<ChatCompletionMessage> messages = instructions.stream()
-                .map(this::toApiMessages)
-                .flatMap(List::stream)
-                .toList();
+        int lastAssistantIndex = lastAssistantIndex(instructions);
+        List<ChatCompletionMessage> messages = new ArrayList<>();
+        for (int i = 0; i < instructions.size(); i++) {
+            boolean keepReasoning = lastAssistantIndex < 0 || i == lastAssistantIndex;
+            messages.addAll(toApiMessages(instructions.get(i), keepReasoning));
+        }
 
         ChatCompletionRequest request = new ChatCompletionRequest(messages, stream);
         request = ModelOptionsUtils.merge(requestOptions, request, ChatCompletionRequest.class);
@@ -345,8 +358,12 @@ public class ReasoningChatModel implements ChatModel {
     /**
      * 与 {@link OpenAiChatModel} 的消息转换一致，唯一差异：ASSISTANT 消息把 metadata 中的
      * reasoningContent 回传为 {@code reasoning_content} 字段（DeepSeek thinking + tool call 的硬性要求）。
+     *
+     * <p>开启 {@code dropStaleReasoning} 时，只对<b>最后一条</b> assistant 消息回传 reasoning_content，
+     * 更早的一律置空。DeepSeek 的硬性要求针对的是紧邻的 tool-call 轮次，而历史 reasoning 在单轮多步
+     * ReAct 中会线性累积成上下文的大头。各供应商对此行为不一致（可能返回 400），因此默认关闭、灰度打开。</p>
      */
-    private List<ChatCompletionMessage> toApiMessages(Message message) {
+    private List<ChatCompletionMessage> toApiMessages(Message message, boolean keepReasoning) {
         return switch (message.getMessageType()) {
             case USER, SYSTEM -> List.of(new ChatCompletionMessage(message.getText(),
                     ChatCompletionMessage.Role.valueOf(message.getMessageType().name())));
@@ -359,7 +376,8 @@ public class ReasoningChatModel implements ChatModel {
                                     new ChatCompletionFunction(tc.name(), tc.arguments())))
                             .toList();
                 }
-                Object reasoning = assistantMessage.getMetadata().get(REASONING_CONTENT_KEY);
+                Object reasoning = keepReasoning
+                        ? assistantMessage.getMetadata().get(REASONING_CONTENT_KEY) : null;
                 yield List.of(new ChatCompletionMessage(assistantMessage.getText(),
                         ChatCompletionMessage.Role.ASSISTANT, null, null, toolCalls, null, null, null,
                         reasoning instanceof String s ? s : null));
@@ -375,6 +393,22 @@ public class ReasoningChatModel implements ChatModel {
                         .toList();
             }
         };
+    }
+
+    /**
+     * 计算「最后一条 assistant 消息」的下标：开启陈旧 reasoning 丢弃时，只有它保留
+     * reasoning_content 回传。未开启时返回 -1（调用方视作全部保留）。
+     */
+    private int lastAssistantIndex(List<Message> messages) {
+        if (!dropStaleReasoning) {
+            return -1;
+        }
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            if (messages.get(i) instanceof AssistantMessage) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private List<FunctionTool> toFunctionTools(List<ToolDefinition> toolDefinitions) {

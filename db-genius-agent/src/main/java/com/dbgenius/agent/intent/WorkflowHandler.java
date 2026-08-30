@@ -6,6 +6,7 @@ import com.dbgenius.agent.DbWorkflowAgent;
 import com.dbgenius.agent.ReasoningChatModel;
 import com.dbgenius.agent.ToolCallAgent;
 import com.dbgenius.agent.compress.ObservationElider;
+import com.dbgenius.agent.guard.LoopBreakerFactory;
 import com.dbgenius.agent.compress.StepHistoryCondenser;
 import com.dbgenius.agent.tool.FileReadTool;
 import com.dbgenius.agent.tool.ImageReadTool;
@@ -73,6 +74,7 @@ public class WorkflowHandler implements IntentHandler {
     private final ToolOutputGuard toolOutputGuard;
     private final StepHistoryCondenser stepHistoryCondenser;
     private final ObservationElider observationElider;
+    private final LoopBreakerFactory loopBreakerFactory;
     private final MessageService messageService;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
@@ -147,6 +149,7 @@ public class WorkflowHandler implements IntentHandler {
             usageVO.setConversationTotalTokens(newTotal);
         });
         agent.setObservationElider(observationElider);
+        agent.setLoopBreaker(loopBreakerFactory.create());
         agent.setStepCondenser(stepHistoryCondenser);
         agent.setToolOutputGuard(toolOutputGuard);
         agent.setMessageSink(new ToolCallAgent.AgentMessageSink() {
