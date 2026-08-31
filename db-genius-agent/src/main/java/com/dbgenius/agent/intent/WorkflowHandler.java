@@ -16,6 +16,7 @@ import com.dbgenius.agent.tool.ToolOutputReadTool;
 import com.dbgenius.agent.tool.guard.ToolOutputArtifactStore;
 import com.dbgenius.agent.tool.guard.ToolOutputGuard;
 import com.dbgenius.agent.tool.file.FileAccessGuard;
+import com.dbgenius.agent.stream.SseChannel;
 import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.common.exception.BusinessException;
 import com.dbgenius.common.exception.ErrorCode;
@@ -40,9 +41,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -88,7 +87,7 @@ public class WorkflowHandler implements IntentHandler {
 
     @Override
     @TrialDeny(ErrorCode.TRIAL_WORKFLOW)
-    public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
+    public void handle(SseChannel channel, String taskId, UnifiedChatRequest request,
                        IntentClassificationResult classification, Long userId,
                        TokenUsageAccumulator tokenUsage, Locale locale) {
         List<Long> dbConfigIds = request.getDbConfigIds();
@@ -97,7 +96,7 @@ public class WorkflowHandler implements IntentHandler {
         // 会话与首条消息也已持久化，客户端重试可携带会话 id 复用会话、恢复上下文
         ConversationVO conversation = getOrCreateConversation(userId, request,
                 dbConfigIds == null || dbConfigIds.isEmpty() ? List.of() : dbConfigIds);
-        sendEvent(emitter, SseEvent.of(taskId, 0, "conversation", conversation.getId()));
+        channel.send(SseEvent.of(taskId, 0, "conversation", conversation.getId()));
 
         // 先取历史再保存本轮用户消息，避免把当前消息重复塞进历史
         List<org.springframework.ai.chat.messages.Message> historyMessages =
@@ -165,8 +164,14 @@ public class WorkflowHandler implements IntentHandler {
                     conversationService.saveMessage(conversation.getId(), "tool", toolResponsesJson, step, "tool");
                 }
             }
+
+            @Override
+            public void onAborted(int step, String content, String reasoningContent) {
+                conversationService.saveMessage(conversation.getId(), "assistant", content, step, "aborted",
+                        reasoningContent, null);
+            }
         });
-        agent.runStream(enhancedMessage, taskId, emitter);
+        agent.runStream(enhancedMessage, taskId, channel);
     }
 
     private void validateDbConfigs(Long userId, List<Long> dbConfigIds) {
@@ -200,14 +205,6 @@ public class WorkflowHandler implements IntentHandler {
         return messages;
     }
 
-    private void sendEvent(SseEmitter emitter, SseEvent event) {
-        try {
-            String json = objectMapper.writeValueAsString(event);
-            emitter.send(SseEmitter.event().data(json));
-        } catch (IOException e) {
-            log.warn("[WorkflowHandler] Failed to send SSE event: {}", e.getMessage());
-        }
-    }
 
     private ConversationVO getOrCreateConversation(Long userId, UnifiedChatRequest request, List<Long> dbConfigIds) {
         Long conversationId = request.getConversationId();

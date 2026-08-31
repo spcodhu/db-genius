@@ -299,6 +299,7 @@ paths:
         | `summary_delta` | 最终总结的流式 Markdown 增量片段（打字机渲染），其前可能伴随 `reasoning` 增量 | 字符串 |
         | `summary` | 终态全量 Markdown 总结，作为权威内容覆盖流式增量完成最终渲染 | Markdown 字符串 |
         | `context_compact` | 单轮内上下文压缩的过程通知（可按工具卡片渲染，避免压缩期间的莫名等待） | JSON 对象（ContextCompactVO）：`{"phase": "start\|end", "tier": "elide\|summarize", "message": "正在压缩上下文...", "beforeTokens": 51200, "afterTokens": 17100, "affectedUnits": 5}` |
+        | `aborted` | 用户主动终止本轮会话（半截输出已落库为 `message.type = aborted`，可从历史记录回放） | null |
         | `error` | 执行出错 | 字符串，错误信息 |
         | `usage` | 本轮 token 用量统计（done 之前发出） | JSON 对象（TokenUsageVO）：`{"promptTokens": 1200, "completionTokens": 340, "totalTokens": 1540, "contextTokens": 1180, "callCount": 4, "conversationTotalTokens": 6120, "contextWindow": 65536}` |
         | `done` | 流结束信号 | null |
@@ -1346,8 +1347,14 @@ components:
         type:
           type: string
           nullable: true
-          enum: [thinking, sql, result, error, file_parsed, step, summary, done, user,
-                 classifying, classified, clarify, routing, content]
+          description: |
+            消息类型。进入后续 LLM 上下文的只有 user / summary（及历史遗留的 null），
+            其余为过程消息或已排除类型：
+            - step / tool：Agent 每步的思考与工具执行结果，仅供前端回放
+            - aborted：用户主动终止时落库的半截回答，前端可渲染「已终止」标记，不进入后续上下文
+            - compressed：已被上下文压缩取代的历史消息
+          enum: [thinking, sql, result, error, file_parsed, step, tool, summary, aborted,
+                 compressed, done, user, classifying, classified, clarify, routing, content]
         fileUrl:
           type: string
           nullable: true
@@ -1502,7 +1509,7 @@ components:
         type:
           type: string
           description: 事件类型
-          enum: [thinking, reasoning, step, summary_delta, summary, error, done,
+          enum: [thinking, reasoning, step, summary_delta, summary, aborted, error, done,
                  classifying, classified, clarify, routing, content, usage, context_compact]
         content:
           description: |
@@ -1517,6 +1524,7 @@ components:
             - content: 简单会话的流式文本片段
             - summary_delta: 最终总结的流式 Markdown 增量片段（打字机渲染）
             - summary: 终态全量 Markdown 总结，权威内容，覆盖流式增量完成最终渲染；查询结果以表格展示，其他任务按结构化 Markdown 展示
+            - aborted: null（用户主动终止；半截输出已落库为 message.type = aborted）
             - error: 错误详情
             - usage: {"promptTokens": 1200, "completionTokens": 340, "totalTokens": 1540, "contextTokens": 1180, "callCount": 4, "conversationTotalTokens": 6120, "contextWindow": 65536}（done 之前发出）
             - context_compact: {"phase": "end", "tier": "elide", "message": "上下文已压缩...", "beforeTokens": 51200, "afterTokens": 17100, "affectedUnits": 5}

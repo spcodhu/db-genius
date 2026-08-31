@@ -177,6 +177,52 @@ class ReasoningChatModelTest {
     }
 
     @Test
+    void shouldReturnPartialAggregateAndCancelUpstreamWhenClientAborts() {
+        ChatCompletionChunk chunk1 = chunk(contentDelta("正在统计"), null);
+        ChatCompletionChunk chunk2 = chunk(contentDelta("用户表"), null);
+        ChatCompletionChunk chunk3 = chunk(contentDelta("，结果是 42。"), ChatCompletionFinishReason.STOP);
+        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        when(openAiApi.chatCompletionStream(any()))
+                .thenReturn(Flux.just(chunk1, chunk2, chunk3).doOnCancel(() -> cancelled.set(true)));
+
+        // 第 2 个 chunk 之后置位取消信号（模拟客户端断开）
+        java.util.concurrent.atomic.AtomicInteger seen = new java.util.concurrent.atomic.AtomicInteger();
+        chatModel.setCancelSignal(() -> seen.get() >= 2);
+
+        List<String> contentDeltas = new ArrayList<>();
+        ChatResponse response = chatModel.streamAggregated(
+                new Prompt(List.of(new UserMessage("统计用户表"))), null,
+                delta -> {
+                    contentDeltas.add(delta);
+                    seen.incrementAndGet();
+                });
+
+        // 只聚合到取消前的增量，第 3 个 chunk 不再消费
+        assertThat(contentDeltas).containsExactly("正在统计", "用户表");
+        assertThat(response.getResult().getOutput().getText()).isEqualTo("正在统计用户表");
+        // 不抛异常，改以约定的 finishReason 表达「半截结果」
+        assertThat(response.getResult().getMetadata().getFinishReason())
+                .isEqualTo(ReasoningChatModel.FINISH_REASON_CLIENT_ABORTED);
+        assertThat(ReasoningChatModel.isClientAborted(response)).isTrue();
+        // 上游被 cancel：供应商连接释放，不再空转烧 token
+        assertThat(cancelled).isTrue();
+    }
+
+    @Test
+    void shouldNotCancelWhenSignalStaysFalse() {
+        ChatCompletionChunk chunk1 = chunk(contentDelta("完整"), null);
+        ChatCompletionChunk chunk2 = chunk(contentDelta("回答"), ChatCompletionFinishReason.STOP);
+        when(openAiApi.chatCompletionStream(any())).thenReturn(Flux.just(chunk1, chunk2));
+        chatModel.setCancelSignal(() -> false);
+
+        ChatResponse response = chatModel.streamAggregated(
+                new Prompt(List.of(new UserMessage("问题"))), null, null);
+
+        assertThat(response.getResult().getOutput().getText()).isEqualTo("完整回答");
+        assertThat(ReasoningChatModel.isClientAborted(response)).isFalse();
+    }
+
+    @Test
     void normalizeReasoningShouldReturnNullForMissingOrBlank() {
         assertThat(ReasoningChatModel.normalizeReasoningContent(null)).isNull();
         assertThat(ReasoningChatModel.normalizeReasoningContent(Map.of())).isNull();

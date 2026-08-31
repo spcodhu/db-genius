@@ -1,5 +1,6 @@
 package com.dbgenius.agent;
 
+import com.dbgenius.agent.stream.StreamCancelledException;
 import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -31,6 +32,7 @@ import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.util.Assert;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
+import reactor.core.Exceptions;
 import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
@@ -38,6 +40,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
@@ -62,6 +65,12 @@ public class ReasoningChatModel implements ChatModel {
 
     /** 与 {@link OpenAiChatModel} 一致的 metadata key，下游统一按此读取推理内容。 */
     public static final String REASONING_CONTENT_KEY = "reasoningContent";
+
+    /**
+     * 客户端断开导致流被主动取消时写入的 finishReason（OpenAI 协议无此枚举值，属本项目内部约定）。
+     * 调用方据此判定"本次是半截结果"，落库为中断消息而非正常回答。
+     */
+    public static final String FINISH_REASON_CLIENT_ABORTED = "CLIENT_ABORTED";
 
     /** 备用 metadata key：防御 Spring AI 升级或供应商映射差异（OpenAI 兼容协议下各厂商字段名不一）。 */
     private static final String[] REASONING_FALLBACK_KEYS = {"reasoning_content", "thinking", "reasoning"};
@@ -98,6 +107,19 @@ public class ReasoningChatModel implements ChatModel {
         return reasoning.isEmpty() ? null : reasoning;
     }
 
+    /**
+     * 判定一次 {@link #streamAggregated} 结果是否为「客户端断开导致的半截结果」。
+     *
+     * @return true 表示内容不完整，调用方应落库为中断消息而非正常回答
+     */
+    public static boolean isClientAborted(ChatResponse response) {
+        if (response == null || response.getResult() == null
+                || response.getResult().getMetadata() == null) {
+            return false;
+        }
+        return FINISH_REASON_CLIENT_ABORTED.equals(response.getResult().getMetadata().getFinishReason());
+    }
+
     private final OpenAiApi openAiApi;
     private final OpenAiChatModel delegate;
     private final OpenAiChatOptions defaultOptions;
@@ -111,6 +133,9 @@ public class ReasoningChatModel implements ChatModel {
      * 由 ChatModelFactory 按配置注入；各供应商对缺失历史 reasoning 的容忍度不一，需灰度验证。
      */
     private boolean dropStaleReasoning;
+
+    /** 取消信号（客户端断开时置位），由 Agent 注入；null 表示不可取消。 */
+    private BooleanSupplier cancelSignal;
 
     public ReasoningChatModel(OpenAiApi openAiApi, OpenAiChatModel delegate,
                               OpenAiChatProperties chatProperties, ToolCallingManager toolCallingManager) {
@@ -126,6 +151,19 @@ public class ReasoningChatModel implements ChatModel {
 
     public void setDropStaleReasoning(boolean dropStaleReasoning) {
         this.dropStaleReasoning = dropStaleReasoning;
+    }
+
+    /**
+     * 设置取消信号（客户端断开时置位）。每个流式 chunk 检查一次；一旦为 true，
+     * {@link #streamAggregated} 立即向上游传播 cancel 释放供应商连接，并把已收到的
+     * 增量聚合成 partial 响应正常返回（finishReason = {@link #FINISH_REASON_CLIENT_ABORTED}），
+     * <b>不抛异常</b>，调用方据此落库半截内容。
+     *
+     * <p>放在实例字段而非方法参数上是安全的：{@code ChatModelFactory.createSession}
+     * 每次请求都新建一个 ReasoningChatModel，实例天然按请求隔离。
+     */
+    public void setCancelSignal(BooleanSupplier cancelSignal) {
+        this.cancelSignal = cancelSignal;
     }
 
     @Override
@@ -166,6 +204,10 @@ public class ReasoningChatModel implements ChatModel {
      * 同 {@link #streamAggregated(Prompt, Consumer)}，另将 content 增量实时回调
      * （供总结等场景做前端打字机渲染），可为 null。
      *
+     * <p>若通过 {@link #setCancelSignal} 注入了取消信号且信号置位，本方法立即向上游传播
+     * cancel（释放供应商 HTTP 连接），并把<b>已收到的增量</b>聚合成 partial 响应正常返回，
+     * finishReason 为 {@link #FINISH_REASON_CLIENT_ABORTED}（可用 {@link #isClientAborted} 判定）。
+     *
      * @param contentDeltaConsumer 每收到一段 content 增量回调一次，可为 null
      */
     public ChatResponse streamAggregated(Prompt prompt, Consumer<String> reasoningDeltaConsumer,
@@ -181,7 +223,12 @@ public class ReasoningChatModel implements ChatModel {
         StringBuilder responseModel = new StringBuilder();
         java.util.concurrent.atomic.AtomicReference<OpenAiApi.Usage> usageRef = new java.util.concurrent.atomic.AtomicReference<>();
 
-        this.openAiApi.chatCompletionStream(request).doOnNext(chunk -> {
+        boolean cancelled = false;
+        Consumer<ChatCompletionChunk> chunkHandler = chunk -> {
+            if (cancelSignal != null && cancelSignal.getAsBoolean()) {
+                // 抛出后 Reactor 向上游传播 cancel，供应商连接立即释放（不再空转烧 token）
+                throw new StreamCancelledException();
+            }
             if (chunk.id() != null) {
                 responseId.setLength(0);
                 responseId.append(chunk.id());
@@ -223,7 +270,27 @@ public class ReasoningChatModel implements ChatModel {
                 finishReason.setLength(0);
                 finishReason.append(choice.finishReason().name());
             }
-        }).blockLast();
+        };
+
+        try {
+            this.openAiApi.chatCompletionStream(request).doOnNext(chunkHandler).blockLast();
+        } catch (StreamCancelledException e) {
+            cancelled = true;
+        } catch (RuntimeException e) {
+            // Reactor 会把 doOnNext 抛出的异常包装成 ReactiveException，需解包再判定
+            if (Exceptions.unwrap(e) instanceof StreamCancelledException) {
+                cancelled = true;
+            } else {
+                throw e;
+            }
+        }
+
+        if (cancelled) {
+            log.info("[ReasoningChatModel] stream cancelled by client, partial content={} chars, reasoning={} chars",
+                    contentBuilder.length(), reasoningBuilder.length());
+            finishReason.setLength(0);
+            finishReason.append(FINISH_REASON_CLIENT_ABORTED);
+        }
 
         ChatResponse response = toAggregatedChatResponse(responseId.toString(), responseModel.toString(),
                 finishReason.toString(), contentBuilder.toString(), reasoningBuilder.toString(),

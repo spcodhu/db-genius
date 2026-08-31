@@ -1,10 +1,10 @@
 package com.dbgenius.agent;
 
 import com.dbgenius.agent.model.AgentState;
+import com.dbgenius.agent.stream.SseChannel;
 import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.model.vo.SseEvent;
 import com.dbgenius.model.vo.TokenUsageVO;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
@@ -38,12 +38,13 @@ public abstract class BaseAgent {
     protected Consumer<TokenUsageVO> usageCallback;
     /** 历史对话消息，由调用方在 runStream 前注入，随本轮消息一起发给模型。 */
     protected List<org.springframework.ai.chat.messages.Message> historyMessages = new ArrayList<>();
-    /** 当前运行的 SSE 发射器，供 step 循环内部（如 think()）推送事件。 */
-    protected SseEmitter emitter;
+    /** 当前运行的 SSE 通道，供 step 循环内部（如 think()）推送事件并感知客户端断开。 */
+    protected SseChannel channel;
     /** step 循环的执行器：默认 commonPool（测试直接 new agent 时维持原行为），生产由 Handler 注入 chatTaskExecutor。 */
     protected Executor executor = ForkJoinPool.commonPool();
-
-    private static final ObjectMapper objectMapper = new ObjectMapper();
+    /** 中断收尾是否已执行：正常分支与 catch 分支都可能触达，落库/记账只允许一次 */
+    private final java.util.concurrent.atomic.AtomicBoolean abortFinalized =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     public void setSummaryCallback(Consumer<String> summaryCallback) {
         this.summaryCallback = summaryCallback;
@@ -83,18 +84,29 @@ public abstract class BaseAgent {
         return emitter;
     }
 
+    /** 便捷重载：自行包装 SseChannel（测试与独立使用场景）。 */
     public void runStream(String userPrompt, String taskId, SseEmitter emitter) {
+        runStream(userPrompt, taskId, new SseChannel(emitter, taskId));
+    }
+
+    /**
+     * 生产入口：复用 Router/Handler 已创建的 {@link SseChannel}，使「客户端已断开」状态
+     * 在整条链路（Tomcat 线程 ↔ chatTaskExecutor 线程）内共享。
+     */
+    public void runStream(String userPrompt, String taskId, SseChannel channel) {
         if (state != AgentState.IDLE) {
             throw new IllegalStateException("Agent is not in IDLE state, current: " + state);
         }
 
         this.taskId = taskId;
-        this.emitter = emitter;
+        this.channel = channel;
+        SseEmitter emitter = channel.getEmitter();
         MDC.put("taskId", taskId);
 
+        // 客户端断开 / 超时都是正常业务事件，不是错误：只置位 aborted（由 SseChannel 打一条
+        // 无堆栈 INFO），step 循环与 LLM 流式调用据此提前收敛，绝不再打 ERROR 堆栈
         emitter.onTimeout(() -> {
-            log.warn("SSE timeout for task {}", taskId);
-            state = AgentState.ERROR;
+            channel.markAborted("timeout");
             cleanup();
         });
 
@@ -106,8 +118,12 @@ public abstract class BaseAgent {
         });
 
         emitter.onError(e -> {
-            log.error("SSE error for task {}", taskId, e);
-            state = AgentState.ERROR;
+            if (isClientDisconnect(e)) {
+                channel.markAborted("container-error");
+            } else {
+                log.error("SSE error for task {}", taskId, e);
+                state = AgentState.ERROR;
+            }
             cleanup();
         });
 
@@ -118,41 +134,104 @@ public abstract class BaseAgent {
             MDC.put("taskId", taskId);
             state = AgentState.RUNNING;
             try {
-                onStepStart(emitter, userPrompt);
+                onStepStart(userPrompt);
 
-                while (currentStep < maxSteps && state == AgentState.RUNNING) {
+                while (currentStep < maxSteps && state == AgentState.RUNNING && !channel.isAborted()) {
                     currentStep++;
                     log.info("[{}] Step {}/{}", name, currentStep, maxSteps);
 
                     // ReAct think-then-act，前面把工具、上下文都配置好了之后这里就可以用固定流程开始执行了
                     String result = step();
 
-                    sendEvent(emitter, SseEvent.of(taskId, currentStep, "step", result));
+                    if (state == AgentState.ABORTED || channel.isAborted()) {
+                        break;
+                    }
+
+                    sendEvent(SseEvent.of(taskId, currentStep, "step", result));
 
                     if (state == AgentState.FINISHED) break;
+                }
+
+                if (channel.isAborted() && state != AgentState.ABORTED) {
+                    state = AgentState.ABORTED;
+                }
+
+                if (state == AgentState.ABORTED) {
+                    // 用户已终止：跳过总结（省掉一次全量上下文的 LLM 调用）与 done 事件，
+                    // 但仍把已消耗的 token 记账落库，并交给子类落库半截内容
+                    finishAborted(userPrompt);
+                    return;
                 }
 
                 if (state == AgentState.RUNNING) {
                     state = AgentState.FINISHED;
                 }
 
-                onFinish(emitter, userPrompt);
+                onFinish(userPrompt);
 
-                sendUsageEvent(emitter, taskId);
-                sendEvent(emitter, SseEvent.done(taskId));
-                emitter.complete();
+                // 总结阶段才断开：markdown 已是半截内容，同样走中断收尾
+                if (state == AgentState.ABORTED || channel.isAborted()) {
+                    state = AgentState.ABORTED;
+                    finishAborted(userPrompt);
+                    return;
+                }
+
+                sendUsageEvent(taskId);
+                sendEvent(SseEvent.done(taskId));
+                channel.complete();
             } catch (Exception e) {
+                if (channel.isAborted() || state == AgentState.ABORTED) {
+                    // 断开后残留的写失败 / 取消传播，属正常收尾，不打堆栈
+                    state = AgentState.ABORTED;
+                    log.debug("[{}] Aborted run threw during teardown: {}", name, e.getMessage());
+                    finishAborted(userPrompt);
+                    return;
+                }
                 log.error("[{}] Execution error", name, e);
                 state = AgentState.ERROR;
-                try {
-                    sendEvent(emitter, SseEvent.error(taskId, e.getMessage()));
-                    emitter.complete();
-                } catch (Exception ignored) {}
+                sendEvent(SseEvent.error(taskId, e.getMessage()));
+                channel.complete();
             } finally {
                 cleanup();
                 MDC.remove("taskId");
             }
         }, executor);
+    }
+
+    /**
+     * 中断收尾：落库半截内容 + 记账已消耗的 token + 释放 SSE 连接。
+     * 任何一步失败都不允许影响其余步骤——这是最后的收尾路径，没有下一次机会。
+     */
+    private void finishAborted(String userPrompt) {
+        if (!abortFinalized.compareAndSet(false, true)) {
+            return;
+        }
+        log.info("[{}] Run aborted by client at step {}", name, currentStep);
+        try {
+            onAbort(userPrompt);
+        } catch (Exception e) {
+            log.warn("[{}] onAbort failed: {}", name, e.getMessage());
+        }
+        persistUsage();
+        // socket 若仍可写（如服务端超时），给前端一个明确的终止信号；已断则静默丢弃
+        channel.sendFinal(SseEvent.aborted(taskId));
+        channel.complete();
+    }
+
+    /**
+     * 判定 SSE 生命周期回调收到的异常是否为「客户端断开」。
+     * {@code AsyncRequestNotUsableException} 继承 IOException，Broken pipe 同理。
+     */
+    private boolean isClientDisconnect(Throwable e) {
+        Throwable cause = e;
+        // 上限防御：异常链自引用时不至于死循环
+        for (int depth = 0; cause != null && depth < 16; depth++) {
+            if (cause instanceof IOException) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
     }
 
     protected abstract String step() throws Exception;
@@ -161,9 +240,21 @@ public abstract class BaseAgent {
      * 在 done 之前下发 usage 事件：先经 usageCallback 持久化（回填会话累计值），再推送快照。
      * 覆盖分类 + 多步 think + summary 的全部 LLM 调用（均由累加器自动记账）。
      */
-    private void sendUsageEvent(SseEmitter emitter, String taskId) {
+    private void sendUsageEvent(String taskId) {
+        TokenUsageVO usageVO = persistUsage();
+        if (usageVO != null) {
+            sendEvent(SseEvent.of(taskId, -1, "usage", usageVO));
+        }
+    }
+
+    /**
+     * 持久化本轮用量（中断场景也必须执行：token 已经真实消耗，不能因用户终止而漏记账）。
+     *
+     * @return 用量快照；无 LLM 调用时返回 null
+     */
+    private TokenUsageVO persistUsage() {
         if (tokenUsageAccumulator == null || tokenUsageAccumulator.getCallCount() == 0) {
-            return;
+            return null;
         }
         TokenUsageVO usageVO = tokenUsageAccumulator.snapshot();
         if (usageCallback != null) {
@@ -173,26 +264,28 @@ public abstract class BaseAgent {
                 log.warn("[{}] Failed to persist token usage", name, e);
             }
         }
-        sendEvent(emitter, SseEvent.of(taskId, -1, "usage", usageVO));
+        return usageVO;
     }
 
-    protected void onStepStart(SseEmitter emitter, String userPrompt) throws Exception {
+    protected void onStepStart(String userPrompt) throws Exception {
     }
 
-    protected void onFinish(SseEmitter emitter, String userPrompt) throws Exception {
+    protected void onFinish(String userPrompt) throws Exception {
+    }
+
+    /**
+     * 客户端主动终止时的收尾钩子：子类在此把已生成的半截内容落库并标记中断。
+     * 此时 SSE 已不可写，不要尝试推送事件。
+     */
+    protected void onAbort(String userPrompt) {
     }
 
     protected void cleanup() {
         MDC.remove("taskId");
     }
 
-    protected void sendEvent(SseEmitter emitter, SseEvent event) {
-        try {
-            String json = objectMapper.writeValueAsString(event);
-            emitter.send(SseEmitter.event().data(json));
-        } catch (IOException e) {
-            log.warn("Failed to send SSE event: {}", e.getMessage());
-        }
+    protected void sendEvent(SseEvent event) {
+        channel.send(event);
     }
 
     public void setState(AgentState state) {

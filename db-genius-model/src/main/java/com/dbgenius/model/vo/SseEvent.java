@@ -40,4 +40,12 @@ public class SseEvent {
     public static SseEvent error(String taskId, String message) {
         return of(taskId, -1, "error", message);
     }
+
+    /**
+     * 用户主动终止本轮会话。半截内容已落库（message.type = aborted），
+     * 前端可据此结束渲染并标记「已终止」。
+     */
+    public static SseEvent aborted(String taskId) {
+        return of(taskId, -1, "aborted", null);
+    }
 }

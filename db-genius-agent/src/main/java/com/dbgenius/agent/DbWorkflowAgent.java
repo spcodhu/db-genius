@@ -8,7 +8,6 @@ import com.dbgenius.agent.tool.TerminateTool;
 import com.dbgenius.agent.tool.ToolOutputReadTool;
 import com.dbgenius.model.vo.SseEvent;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Locale;
 import java.util.Map;
@@ -48,12 +47,12 @@ public class DbWorkflowAgent extends ToolCallAgent {
     }
 
     @Override
-    protected void onStepStart(SseEmitter emitter, String userPrompt) throws Exception {
-        super.onStepStart(emitter, userPrompt);
+    protected void onStepStart(String userPrompt) throws Exception {
+        super.onStepStart(userPrompt);
         String hint = hasFiles
                 ? "Workflow mode with file upload detected. Will parse file first, then process data."
                 : "Complex workflow mode. Planning multi-step execution.";
-        sendEvent(emitter, SseEvent.of(taskId, 0, "thinking", hint));
+        sendEvent(SseEvent.of(taskId, 0, "thinking", hint));
     }
 
     private static String buildSystemPrompt(String dbDoc, boolean hasFiles, Locale locale) {

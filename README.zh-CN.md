@@ -89,7 +89,7 @@ Spring Boot 3.4 · Spring AI 1.0 · JDK 21 · DeepSeek(OpenAI 兼容 API)· MyBa
 {
   "taskId": "uuid",
   "step": 1,
-  "type": "classifying | classified | clarify | routing | thinking | reasoning | content | sql | result | error | file_parsed | step | summary_delta | summary | done",
+  "type": "classifying | classified | clarify | routing | thinking | reasoning | content | sql | result | error | file_parsed | step | summary_delta | summary | aborted | done",
   "content": "...",
   "timestamp": 1719648000000
 }
@@ -104,6 +104,7 @@ Spring Boot 3.4 · Spring AI 1.0 · JDK 21 · DeepSeek(OpenAI 兼容 API)· MyBa
 | `content` | 简单问答的流式文本 |
 | `step` | ReAct 循环中一次工具执行结果 |
 | `summary_delta` / `summary` | 最终 Markdown 流式增量 / 权威全文 |
+| `aborted` | 用户主动终止,半截输出已落库为 `message.type = aborted`,可在历史记录中回放 |
 | `error` / `done` | 错误详情 / 流结束 |
 
 完整的 REST + SSE 接口契约见 [`api-docs.yaml`](api-docs.yaml)(OpenAPI 3)。

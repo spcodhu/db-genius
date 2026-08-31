@@ -92,7 +92,7 @@ All events are JSON objects:
 {
   "taskId": "uuid",
   "step": 1,
-  "type": "classifying | classified | clarify | routing | thinking | reasoning | content | sql | result | error | file_parsed | step | context_compact | summary_delta | summary | done",
+  "type": "classifying | classified | clarify | routing | thinking | reasoning | content | sql | result | error | file_parsed | step | context_compact | summary_delta | summary | aborted | done",
   "content": "...",
   "timestamp": 1719648000000
 }
@@ -108,6 +108,7 @@ All events are JSON objects:
 | `step` | One tool-execution result inside the ReAct loop |
 | `context_compact` | In-run context compaction progress (`{phase, tier, beforeTokens, afterTokens, affectedUnits}`) so the UI can show it instead of an unexplained pause |
 | `summary_delta` / `summary` | Streaming final Markdown / authoritative full text |
+| `aborted` | The user stopped the run — partial output is persisted as `message.type = aborted` and replayable from history |
 | `error` / `done` | Failure details / end of stream |
 
 The complete REST + SSE contract is described in [`api-docs.yaml`](api-docs.yaml) (OpenAPI 3).

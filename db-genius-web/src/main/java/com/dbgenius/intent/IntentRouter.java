@@ -4,6 +4,7 @@ import com.dbgenius.agent.compress.AutoCompressService;
 import com.dbgenius.agent.intent.ChatContext;
 import com.dbgenius.agent.intent.IntentClassifier;
 import com.dbgenius.agent.intent.IntentHandler;
+import com.dbgenius.agent.stream.SseChannel;
 import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.common.exception.BusinessException;
 import com.dbgenius.common.i18n.MessageService;
@@ -19,7 +20,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -56,6 +56,8 @@ public class IntentRouter {
     public SseEmitter route(UnifiedChatRequest request, Long userId, Locale locale) {
         String taskId = UUID.randomUUID().toString();
         SseEmitter emitter = new SseEmitter(300_000L);
+        // 全链路唯一 SSE 出口：客户端断开状态在 Router / Handler / Agent 之间共享
+        SseChannel channel = new SseChannel(emitter, taskId);
         // 本轮请求的 token 用量累加器：分类与各 Handler 的 LLM 调用统一记账
         TokenUsageAccumulator tokenUsage = new TokenUsageAccumulator();
 
@@ -65,14 +67,14 @@ public class IntentRouter {
                 if (request.getConfirmedIntent() != null) {
                     IntentClassificationResult confirmed = new IntentClassificationResult(
                             request.getConfirmedIntent(), 1.0, "User confirmed intent", false);
-                    sendEvent(emitter, SseEvent.of(taskId, 0, "routing",
+                    channel.send(SseEvent.of(taskId, 0, "routing",
                             messageService.get("chat.routing", locale, intentLabel(confirmed.intent(), locale))));
-                    dispatchToHandler(emitter, taskId, request, confirmed, userId, tokenUsage, locale);
+                    dispatchToHandler(channel, taskId, request, confirmed, userId, tokenUsage, locale);
                     return;
                 }
 
                 // 2. 推送 classifying 状态
-                sendEvent(emitter, SseEvent.of(taskId, 0, "classifying",
+                channel.send(SseEvent.of(taskId, 0, "classifying",
                         messageService.get("chat.classifying", locale)));
 
                 // 3. 加载历史上下文
@@ -92,63 +94,73 @@ public class IntentRouter {
                         result.intent(), result.confidence(), result.needsClarification());
 
                 // 6. 推送分类结果
-                sendEvent(emitter, SseEvent.of(taskId, 0, "classified", result));
+                channel.send(SseEvent.of(taskId, 0, "classified", result));
 
                 // 7. 判断是否需要确认
                 if (result.needsClarification() || result.confidence() < CONFIDENCE_THRESHOLD) {
-                    sendClarificationEvent(emitter, taskId, result, request, locale);
-                    // 澄清分支不进入 Handler，分类消耗的 token 也需告知前端
-                    sendUsageEvent(emitter, taskId, tokenUsage);
+                    sendClarificationEvent(channel, taskId, result, request, locale);
+                    // 澄清分支不进入 Handler，分类消耗的 token 也需告知前端。
+                    // 必须在 complete 之前推送：通道结束后一切写入都会被丢弃
+                    sendUsageEvent(channel, taskId, tokenUsage);
+                    channel.complete();
                     return;
                 }
 
                 // 8. 路由到 Handler
-                sendEvent(emitter, SseEvent.of(taskId, 0, "routing",
+                channel.send(SseEvent.of(taskId, 0, "routing",
                         messageService.get("chat.routing", locale, intentLabel(result.intent(), locale))));
-                dispatchToHandler(emitter, taskId, request, result, userId, tokenUsage, locale);
+                dispatchToHandler(channel, taskId, request, result, userId, tokenUsage, locale);
 
             } catch (Exception e) {
+                if (channel.isAborted()) {
+                    // 用户主动终止：正常业务事件，不打 ERROR 堆栈，也不再推 error 事件
+                    log.info("[IntentRouter] Route aborted by client, task={}", taskId);
+                    return;
+                }
                 log.error("[IntentRouter] Route error", e);
-                sendUsageEvent(emitter, taskId, tokenUsage);
-                sendEvent(emitter, SseEvent.error(taskId, resolveErrorMessage(e, locale)));
-                emitter.complete();
+                sendUsageEvent(channel, taskId, tokenUsage);
+                channel.send(SseEvent.error(taskId, resolveErrorMessage(e, locale)));
+                channel.complete();
             }
         }, chatTaskExecutor);
 
         return emitter;
     }
 
-    private void dispatchToHandler(SseEmitter emitter, String taskId, UnifiedChatRequest request,
+    private void dispatchToHandler(SseChannel channel, String taskId, UnifiedChatRequest request,
                                    IntentClassificationResult classification, Long userId,
                                    TokenUsageAccumulator tokenUsage, Locale locale) {
         IntentHandler handler = registry.getHandler(classification.intent());
         try {
-            handler.handle(emitter, taskId, request, classification, userId, tokenUsage, locale);
+            handler.handle(channel, taskId, request, classification, userId, tokenUsage, locale);
         } catch (Exception e) {
+            if (channel.isAborted()) {
+                log.info("[IntentRouter] Handler aborted by client, task={}", taskId);
+                return;
+            }
             log.error("[IntentRouter] Handler error", e);
-            sendUsageEvent(emitter, taskId, tokenUsage);
-            sendEvent(emitter, SseEvent.error(taskId, resolveErrorMessage(e, locale)));
-            emitter.complete();
+            sendUsageEvent(channel, taskId, tokenUsage);
+            channel.send(SseEvent.error(taskId, resolveErrorMessage(e, locale)));
+            channel.complete();
         }
     }
 
     /** 尽力而为地下发已记账的用量（无调用则不发） */
-    private void sendUsageEvent(SseEmitter emitter, String taskId, TokenUsageAccumulator tokenUsage) {
+    private void sendUsageEvent(SseChannel channel, String taskId, TokenUsageAccumulator tokenUsage) {
         if (tokenUsage == null || tokenUsage.getCallCount() == 0) {
             return;
         }
-        sendEvent(emitter, SseEvent.of(taskId, -1, "usage", tokenUsage.snapshot()));
+        channel.send(SseEvent.of(taskId, -1, "usage", tokenUsage.snapshot()));
     }
 
-    private void sendClarificationEvent(SseEmitter emitter, String taskId,
+    private void sendClarificationEvent(SseChannel channel, String taskId,
                                         IntentClassificationResult result, UnifiedChatRequest request,
                                         Locale locale) {
         Map<String, Object> clarifyContent = new LinkedHashMap<>();
         clarifyContent.put("question", messageService.get("chat.clarify.question", locale));
         clarifyContent.put("options", buildOptions(result, request, locale));
         clarifyContent.put("reasoning", result.reasoning());
-        sendEvent(emitter, SseEvent.of(taskId, 0, "clarify", clarifyContent));
-        emitter.complete();
+        channel.send(SseEvent.of(taskId, 0, "clarify", clarifyContent));
     }
 
     private List<Map<String, String>> buildOptions(IntentClassificationResult result,
@@ -220,12 +232,4 @@ public class IntentRouter {
         return new ChatContext(hasDbConfig, hasFiles, hasCompareConfig, locale);
     }
 
-    private void sendEvent(SseEmitter emitter, SseEvent event) {
-        try {
-            String json = objectMapper.writeValueAsString(event);
-            emitter.send(SseEmitter.event().data(json));
-        } catch (IOException e) {
-            log.warn("[IntentRouter] Failed to send SSE event: {}", e.getMessage());
-        }
-    }
 }

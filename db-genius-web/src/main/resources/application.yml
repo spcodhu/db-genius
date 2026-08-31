@@ -144,5 +144,8 @@ logging:
   level:
     com.dbgenius: DEBUG
     org.springframework.ai: DEBUG
+    # 目标库（用户自建 MongoDB）连接失败由 MongoDbAdapter 捕获后走 ErrorCode 返回，
+    # 驱动自身的 INFO 级集群/心跳日志与堆栈对运维无价值，统一压到 WARN
+    org.mongodb.driver: WARN
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{taskId:-}] %-5level %logger{36} - %msg%n"

@@ -26,7 +26,6 @@ import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.model.tool.ToolExecutionResult;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -62,6 +61,19 @@ public class ToolCallAgent extends ReActAgent {
          */
         default void onToolResponses(int step, String toolResponsesJson) {
         }
+
+        /**
+         * 用户主动终止本轮会话时的半截 assistant 内容。
+         *
+         * <p>与 {@link #onAssistant} 分开是为了让调用方能落成不同的消息 type（{@code aborted}），
+         * 从而在历史记录里标记「用户已终止」，且不进入后续 LLM 上下文。
+         *
+         * @param step             中断发生时的步骤号
+         * @param content          已生成的半截正文（可能为空串）
+         * @param reasoningContent 已生成的半截思考内容，无则为 null
+         */
+        default void onAborted(int step, String content, String reasoningContent) {
+        }
     }
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
@@ -89,6 +101,12 @@ public class ToolCallAgent extends ReActAgent {
     private Locale locale = Locale.ENGLISH;
     /** 消息文案服务（可选装配）：装配后 SSE 状态文案按 locale 本地化，未装配保持旧的硬编码兜底 */
     private MessageService messageService;
+    /** 客户端断开时已生成的半截正文，由 think() 暂存、onAbort() 落库 */
+    private String abortedContent = "";
+    /** 客户端断开时已生成的半截思考内容，无则为 null */
+    private String abortedReasoning;
+    /** 本轮终态答案是否已由 summaryCallback 落库：为 true 时 onAbort 不再补写 aborted 消息 */
+    private boolean finalAnswerPersisted;
 
     public ToolCallAgent(String name, String systemPrompt, String nextStepPrompt,
                          int maxSteps, ReasoningChatModel reasoningChatModel,
@@ -202,8 +220,8 @@ public class ToolCallAgent extends ReActAgent {
     }
 
     private void sendCompactEvent(ContextCompactVO payload) {
-        if (emitter != null) {
-            sendEvent(emitter, SseEvent.of(taskId, currentStep, "context_compact", payload));
+        if (channel != null) {
+            sendEvent(SseEvent.of(taskId, currentStep, "context_compact", payload));
         }
     }
 
@@ -228,7 +246,7 @@ public class ToolCallAgent extends ReActAgent {
     }
 
     @Override
-    protected void onStepStart(SseEmitter emitter, String userPrompt) throws Exception {
+    protected void onStepStart(String userPrompt) throws Exception {
         if (!historyMessages.isEmpty()) {
             messageList.addAll(historyMessages);
         }
@@ -236,7 +254,9 @@ public class ToolCallAgent extends ReActAgent {
         // 记录本轮 Agent 自己生成内容的起始下标：单轮内压缩（StepHistoryCondenser）只作用于此下标之后的
         // 步骤消息，历史消息与当前用户输入永远不动，与跨轮压缩职责边界清晰分离
         turnStartIndex = messageList.size();
-        sendEvent(emitter, SseEvent.of(taskId, 0, "thinking", "Analyzing your request..."));
+        // 客户端断开时取消进行中的 LLM 流：立即释放供应商连接，不再空转烧 token
+        reasoningChatModel.setCancelSignal(() -> channel != null && channel.isAborted());
+        sendEvent(SseEvent.of(taskId, 0, "thinking", "Analyzing your request..."));
     }
 
     /**
@@ -261,10 +281,20 @@ public class ToolCallAgent extends ReActAgent {
         // 数十秒才一次性出结果，SSE 表现为步骤成批到达）；返回的完整响应与 call() 同构，
         // metadata 带完整 reasoningContent，后续轮次由 ReasoningChatModel 回传给 DeepSeek
         ChatResponse response = reasoningChatModel.streamAggregated(prompt,
-                reasoningDelta -> sendEvent(emitter, SseEvent.of(taskId, currentStep, "reasoning", reasoningDelta)));
+                reasoningDelta -> sendEvent(SseEvent.of(taskId, currentStep, "reasoning", reasoningDelta)));
 
         if (response == null || response.getResult() == null) {
             log.warn("[{}] Empty response from LLM", name);
+            return false;
+        }
+
+        // 客户端已断开：本次是半截结果，暂存供 onAbort 落库，绝不进入 act()
+        // （半截推理产出的 SQL 不可信，更不能在用户已经终止后继续执行）
+        if (ReasoningChatModel.isClientAborted(response)) {
+            AssistantMessage partial = response.getResult().getOutput();
+            this.abortedContent = partial.getText() != null ? partial.getText() : "";
+            this.abortedReasoning = ReasoningChatModel.normalizeReasoningContent(partial.getMetadata());
+            state = AgentState.ABORTED;
             return false;
         }
 
@@ -301,6 +331,11 @@ public class ToolCallAgent extends ReActAgent {
 
     @Override
     protected String act() throws Exception {
+        // 最后一道闸：客户端已终止时绝不执行任何工具（可能是写操作）
+        if (state == AgentState.ABORTED || (channel != null && channel.isAborted())) {
+            state = AgentState.ABORTED;
+            return "Aborted by client before tool execution.";
+        }
         if (toolCallChatResponse == null || !toolCallChatResponse.hasToolCalls()) {
             return "No tools to call.";
         }
@@ -544,18 +579,40 @@ public class ToolCallAgent extends ReActAgent {
     private static final String SUMMARY_PROMPT_TEMPLATE = "tool-call-summary";
 
     @Override
-    protected void onFinish(SseEmitter emitter, String userPrompt) throws Exception {
+    protected void onFinish(String userPrompt) throws Exception {
         // summary 是一次全量上下文的调用，耗时较长，先推状态避免前端误以为连接已断
-        sendEvent(emitter, SseEvent.of(taskId, currentStep, "thinking", summaryStatusText()));
-        String markdown = generateMarkdownSummary(userPrompt, emitter);
-        sendEvent(emitter, SseEvent.of(taskId, currentStep, "summary", markdown));
+        sendEvent(SseEvent.of(taskId, currentStep, "thinking", summaryStatusText()));
+        String markdown = generateMarkdownSummary(userPrompt);
+        // 总结过程中客户端断开：markdown 是半截内容，落成中断消息而非正常回答
+        if (state == AgentState.ABORTED || (channel != null && channel.isAborted())) {
+            this.abortedContent = markdown != null ? markdown : "";
+            state = AgentState.ABORTED;
+            return;
+        }
+        sendEvent(SseEvent.of(taskId, currentStep, "summary", markdown));
         if (summaryCallback != null) {
             try {
                 summaryCallback.accept(markdown);
+                // 完整答案已落库：即使推送 summary 事件时才发现断开，也不能再补一条空的 aborted
+                finalAnswerPersisted = true;
             } catch (Exception e) {
                 log.warn("[{}] summary callback failed: {}", name, e.getMessage());
             }
         }
+    }
+
+    /**
+     * 客户端主动终止：把已生成的半截内容落库并标记 {@code aborted}。
+     *
+     * <p>内容为空也要落一条（空串），否则历史记录里看不出「用户在这里终止了」；
+     * 但若完整答案已由 summaryCallback 落库，则本轮已有终态消息，不再补写。
+     */
+    @Override
+    protected void onAbort(String userPrompt) {
+        if (messageSink == null || finalAnswerPersisted) {
+            return;
+        }
+        messageSink.onAborted(currentStep, abortedContent != null ? abortedContent : "", abortedReasoning);
     }
 
     /** "正在生成总结"状态文案：装配了 MessageService 时按本轮 locale 本地化，否则保持旧的硬编码兜底 */
@@ -566,7 +623,7 @@ public class ToolCallAgent extends ReActAgent {
         return "正在生成总结...";
     }
 
-    private String generateMarkdownSummary(String userPrompt, SseEmitter emitter) {
+    private String generateMarkdownSummary(String userPrompt) {
         try {
             String[] sections = PromptTemplateLoader.splitSections(
                     PromptTemplateLoader.load(SUMMARY_PROMPT_TEMPLATE, locale));
@@ -583,8 +640,13 @@ public class ToolCallAgent extends ReActAgent {
             // 流式聚合：reasoning/content 增量实时推前端（打字机效果），聚合全文作为
             // 终态 summary 事件与落库内容；终态事件同时是前端渲染的权威兜底
             ChatResponse response = reasoningChatModel.streamAggregated(new Prompt(summaryMessages),
-                    reasoningDelta -> sendEvent(emitter, SseEvent.of(taskId, currentStep, "reasoning", reasoningDelta)),
-                    contentDelta -> sendEvent(emitter, SseEvent.of(taskId, currentStep, "summary_delta", contentDelta)));
+                    reasoningDelta -> sendEvent(SseEvent.of(taskId, currentStep, "reasoning", reasoningDelta)),
+                    contentDelta -> sendEvent(SseEvent.of(taskId, currentStep, "summary_delta", contentDelta)));
+
+            if (ReasoningChatModel.isClientAborted(response)) {
+                state = AgentState.ABORTED;
+                return response.getResult().getOutput().getText();
+            }
 
             String markdown = response != null && response.getResult() != null
                     ? response.getResult().getOutput().getText() : null;

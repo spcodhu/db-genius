@@ -3,6 +3,7 @@ package com.dbgenius.agent.intent;
 import com.dbgenius.agent.ChatModelFactory;
 import com.dbgenius.agent.ChatModelSession;
 import com.dbgenius.agent.ReasoningChatModel;
+import com.dbgenius.agent.stream.SseChannel;
 import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.model.dto.UnifiedChatRequest;
 import com.dbgenius.model.entity.Conversation;
@@ -24,11 +25,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.Disposable;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -88,11 +89,11 @@ public class SimpleChatHandler implements IntentHandler {
      * @param locale         本轮请求的语言环境（异步线程中 LocaleContextHolder 已失效，显式传入）
      */
     @Override
-    public void handle(SseEmitter emitter, String taskId, UnifiedChatRequest request,
+    public void handle(SseChannel channel, String taskId, UnifiedChatRequest request,
                        IntentClassificationResult classification, Long userId,
                        TokenUsageAccumulator tokenUsage, Locale locale) {
         ConversationVO conversation = getOrCreateConversation(userId, request);
-        sendEvent(emitter, SseEvent.of(taskId, 0, "conversation", conversation.getId()));
+        channel.send(SseEvent.of(taskId, 0, "conversation", conversation.getId()));
 
         // 先取历史再保存本轮用户消息，避免把当前消息重复塞进历史
         List<Message> history = conversationService.getRecentMessages(conversation.getId(), HISTORY_SIZE);
@@ -100,8 +101,13 @@ public class SimpleChatHandler implements IntentHandler {
 
         conversationService.saveMessage(conversation.getId(), "user", request.getMessage(), null, "user");
 
-        StringBuilder fullContent = new StringBuilder();
-        StringBuilder fullReasoning = new StringBuilder();
+        // 增量在 Reactor 线程累积，但断开时由 Tomcat 线程读取落库：StringBuilder 非线程安全，
+        // 必须走带锁的累加器（dispose 只是请求取消，在途的 onNext 仍可能并发 append）
+        StreamAccumulator accumulator = new StreamAccumulator();
+        // 正常完成与客户端中断都会触发落库，用 CAS 保证本轮回复只落一条
+        AtomicBoolean persisted = new AtomicBoolean(false);
+        // updateTokenUsage 是 total_tokens += 的相对更新，重复调用会永久虚增，同样需要 CAS
+        AtomicBoolean usagePersisted = new AtomicBoolean(false);
 
         ChatModelSession session = chatModelFactory.createSession(
                 userModelConfigService.getActiveConfig(userId), tokenUsage);
@@ -122,47 +128,139 @@ public class SimpleChatHandler implements IntentHandler {
                             Object reasoning = output.getMetadata()
                                     .get(ReasoningChatModel.REASONING_CONTENT_KEY);
                             if (reasoning instanceof String reasoningDelta && !reasoningDelta.isEmpty()) {
-                                fullReasoning.append(reasoningDelta);
-                                sendEvent(emitter, SseEvent.of(taskId, 0, "reasoning", reasoningDelta));
+                                accumulator.appendReasoning(reasoningDelta);
+                                channel.send(SseEvent.of(taskId, 0, "reasoning", reasoningDelta));
                             }
                             String token = output.getText();
                             if (token != null && !token.isEmpty()) {
-                                fullContent.append(token);
-                                sendEvent(emitter, SseEvent.of(taskId, 0, "content", token));
+                                accumulator.appendContent(token);
+                                channel.send(SseEvent.of(taskId, 0, "content", token));
                             }
                         },
                         error -> {
+                            if (channel.isAborted()) {
+                                // 用户已终止：不是错误，落半截内容后静默收尾
+                                log.info("[SimpleChatHandler] Stream aborted by client, task={}", taskId);
+                                finishAborted(conversation.getId(), channel, taskId, accumulator,
+                                        tokenUsage, persisted, usagePersisted);
+                                return;
+                            }
                             log.error("[SimpleChatHandler] Stream error", error);
-                            sendEvent(emitter, SseEvent.error(taskId, error.getMessage()));
-                            emitter.complete();
+                            channel.send(SseEvent.error(taskId, error.getMessage()));
+                            channel.complete();
                         },
                         () -> {
-                            conversationService.saveMessage(
-                                    conversation.getId(), "assistant", fullContent.toString(), -1, "summary",
-                                    ReasoningChatModel.normalizeReasoningContent(
-                                            Map.of(ReasoningChatModel.REASONING_CONTENT_KEY,
-                                                    fullReasoning.toString())),
-                                    null);
-                            // 在 done 之前下发 usage 事件并持久化本轮用量
-                            if (tokenUsage != null && tokenUsage.getCallCount() > 0) {
-                                TokenUsageVO usageVO = tokenUsage.snapshot();
-                                long newTotal = conversationService.updateTokenUsage(
-                                        conversation.getId(), usageVO.getTotalTokens(), usageVO.getContextTokens());
-                                usageVO.setConversationTotalTokens(newTotal);
-                                sendEvent(emitter, SseEvent.of(taskId, -1, "usage", usageVO));
+                            if (channel.isAborted()) {
+                                finishAborted(conversation.getId(), channel, taskId, accumulator,
+                                        tokenUsage, persisted, usagePersisted);
+                                return;
                             }
-                            sendEvent(emitter, SseEvent.done(taskId));
-                            emitter.complete();
+                            persistAssistant(conversation.getId(), accumulator, "summary", persisted);
+                            // 在 done 之前下发 usage 事件并持久化本轮用量
+                            TokenUsageVO usageVO = persistUsage(conversation.getId(), tokenUsage, usagePersisted);
+                            if (usageVO != null) {
+                                channel.send(SseEvent.of(taskId, -1, "usage", usageVO));
+                            }
+                            channel.send(SseEvent.done(taskId));
+                            channel.complete();
                         }
                 );
 
         // 类似于 finally ，在流结束之后取消之前的订阅
+        SseEmitter emitter = channel.getEmitter();
         emitter.onCompletion(disposable::dispose);
-        emitter.onTimeout(disposable::dispose);
-        emitter.onError(e -> {
-            log.error("[SimpleChatHandler] SSE emitter error", e);
+        emitter.onTimeout(() -> {
+            channel.markAborted("timeout");
             disposable.dispose();
         });
+        emitter.onError(e -> {
+            // 客户端断开是正常业务事件：置位后 dispose 上游订阅（不再烧 token），
+            // 半截内容在此立即落库，不依赖上游回调是否还会到达，不打 ERROR 堆栈
+            channel.markAborted("container-error");
+            disposable.dispose();
+            finishAborted(conversation.getId(), channel, taskId, accumulator,
+                    tokenUsage, persisted, usagePersisted);
+        });
+    }
+
+    /**
+     * 中断收尾：落半截内容 + 记账已消耗 token + 推终止信号 + 释放连接。
+     * 三条路径（上游 error / 上游 complete / 容器 onError）都可能进入，内部全部幂等。
+     */
+    private void finishAborted(Long conversationId, SseChannel channel, String taskId,
+                               StreamAccumulator accumulator, TokenUsageAccumulator tokenUsage,
+                               AtomicBoolean persisted, AtomicBoolean usagePersisted) {
+        persistAssistant(conversationId, accumulator, "aborted", persisted);
+        persistUsage(conversationId, tokenUsage, usagePersisted);
+        channel.sendFinal(SseEvent.aborted(taskId));
+        channel.complete();
+    }
+
+    /**
+     * 落库本轮 assistant 回复。CAS 保证只落一条：正常完成、客户端断开、容器错误回调
+     * 三条路径都可能触发，但同一轮只允许写入一次。
+     *
+     * @param type 正常完成为 {@code summary}；用户主动终止为 {@code aborted}（不进入后续上下文）
+     */
+    private void persistAssistant(Long conversationId, StreamAccumulator accumulator,
+                                  String type, AtomicBoolean persisted) {
+        if (!persisted.compareAndSet(false, true)) {
+            return;
+        }
+        conversationService.saveMessage(conversationId, "assistant", accumulator.content(), -1, type,
+                ReasoningChatModel.normalizeReasoningContent(
+                        Map.of(ReasoningChatModel.REASONING_CONTENT_KEY, accumulator.reasoning())),
+                null);
+    }
+
+    /**
+     * 持久化本轮用量（中断场景也要记账：token 已真实消耗）。无 LLM 调用或已记过账时返回 null。
+     *
+     * <p>{@code updateTokenUsage} 是 {@code total_tokens += n} 的相对更新，重复执行会永久
+     * 虚增会话累计值，因此必须 CAS 保护。
+     */
+    private TokenUsageVO persistUsage(Long conversationId, TokenUsageAccumulator tokenUsage,
+                                      AtomicBoolean usagePersisted) {
+        if (tokenUsage == null || tokenUsage.getCallCount() == 0) {
+            return null;
+        }
+        if (!usagePersisted.compareAndSet(false, true)) {
+            return null;
+        }
+        TokenUsageVO usageVO = tokenUsage.snapshot();
+        long newTotal = conversationService.updateTokenUsage(
+                conversationId, usageVO.getTotalTokens(), usageVO.getContextTokens());
+        usageVO.setConversationTotalTokens(newTotal);
+        return usageVO;
+    }
+
+    /**
+     * 流式增量的线程安全累加器。
+     *
+     * <p>增量在 Reactor 线程 append，但客户端断开时由 Tomcat 的 {@code onError} 回调读取落库
+     * （{@code dispose()} 只是请求取消，在途的 {@code onNext} 仍会继续 append）。裸
+     * StringBuilder 在这种并发下可能读到撕裂文本甚至抛越界异常，故统一加锁。
+     */
+    private static final class StreamAccumulator {
+
+        private final StringBuilder content = new StringBuilder();
+        private final StringBuilder reasoning = new StringBuilder();
+
+        synchronized void appendContent(String delta) {
+            content.append(delta);
+        }
+
+        synchronized void appendReasoning(String delta) {
+            reasoning.append(delta);
+        }
+
+        synchronized String content() {
+            return content.toString();
+        }
+
+        synchronized String reasoning() {
+            return reasoning.toString();
+        }
     }
 
     private ConversationVO getOrCreateConversation(Long userId, UnifiedChatRequest request) {
@@ -193,12 +291,4 @@ public class SimpleChatHandler implements IntentHandler {
         return messages;
     }
 
-    private void sendEvent(SseEmitter emitter, SseEvent event) {
-        try {
-            String json = objectMapper.writeValueAsString(event);
-            emitter.send(SseEmitter.event().data(json));
-        } catch (IOException e) {
-            log.warn("[SimpleChatHandler] Failed to send SSE event: {}", e.getMessage());
-        }
-    }
 }

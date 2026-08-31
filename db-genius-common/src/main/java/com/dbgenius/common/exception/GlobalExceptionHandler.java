@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 
 /**
  * 全局异常处理器：统一返回出口。
@@ -37,6 +38,21 @@ public class GlobalExceptionHandler {
     public R<Void> handleIllegalArgument(IllegalArgumentException e) {
         log.warn("Illegal argument: {}", e.getMessage());
         return R.fail(400, e.getMessage());
+    }
+
+    /**
+     * 客户端在 SSE / 异步响应期间断开（用户主动终止会话、关页面、网络中断）。
+     *
+     * <p>这是正常业务事件而非错误：容器会把写失败包装成 {@link AsyncRequestNotUsableException}
+     * 并沿 async dispatch 冒泡到这里。若落到通用 {@code handleException} 会连打两段堆栈——
+     * 一段是异常本身，另一段是「返回 R 但响应 Content-Type 已是 text/event-stream、无 converter」
+     * 导致的 HttpMessageNotWritableException。
+     *
+     * <p>因此这里返回 {@code void}：不写响应体，不触发消息转换，只留一条 DEBUG。
+     */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleClientDisconnect(AsyncRequestNotUsableException e) {
+        log.debug("Client disconnected during async response: {}", e.getMessage());
     }
 
     @ExceptionHandler(Exception.class)
