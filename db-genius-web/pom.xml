@@ -23,6 +23,28 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
+        <!-- 可观测性导出侧（埋点 API micrometer-observation/core 已由 spring-ai-commons 带入，
+             这里只补导出与桥接；版本全部由 spring-boot-starter-parent 管理，不要自行 pin）。
+             不加 actuator 就没有 ObservationRegistry bean，下游注入无从谈起 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <!-- Micrometer Observation → OTel Span 的桥 -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+        <!-- OTLP trace 导出（Jaeger / Collector / Langfuse 均可承接） -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
+        <!-- 指标暴露给 Prometheus 抓取（/api/actuator/prometheus） -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>

@@ -1,5 +1,6 @@
 package com.dbgenius.agent;
 
+import com.dbgenius.agent.metrics.AgentMetrics;
 import com.dbgenius.agent.model.AgentState;
 import com.dbgenius.agent.stream.SseChannel;
 import com.dbgenius.agent.usage.TokenUsageAccumulator;
@@ -42,6 +43,8 @@ public abstract class BaseAgent {
     protected SseChannel channel;
     /** step 循环的执行器：默认 commonPool（测试直接 new agent 时维持原行为），生产由 Handler 注入 chatTaskExecutor。 */
     protected Executor executor = ForkJoinPool.commonPool();
+    /** 业务指标埋点（可选装配）：未装配时全部跳过，行为与现状一致 */
+    protected AgentMetrics agentMetrics;
     /** 中断收尾是否已执行：正常分支与 catch 分支都可能触达，落库/记账只允许一次 */
     private final java.util.concurrent.atomic.AtomicBoolean abortFinalized =
             new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -60,6 +63,10 @@ public abstract class BaseAgent {
 
     public void setExecutor(Executor executor) {
         this.executor = executor;
+    }
+
+    public void setAgentMetrics(AgentMetrics agentMetrics) {
+        this.agentMetrics = agentMetrics;
     }
 
     public void setHistoryMessages(List<org.springframework.ai.chat.messages.Message> historyMessages) {
@@ -152,6 +159,10 @@ public abstract class BaseAgent {
                     if (state == AgentState.FINISHED) break;
                 }
 
+                // 循环出口归因：此处 state==FINISHED 只可能是 act() 中 doTerminate 置位；
+                // 仍 RUNNING 而后被下面翻转成 FINISHED 的，才是 maxSteps 耗尽
+                boolean finishedByTool = state == AgentState.FINISHED;
+
                 if (channel.isAborted() && state != AgentState.ABORTED) {
                     state = AgentState.ABORTED;
                 }
@@ -179,6 +190,7 @@ public abstract class BaseAgent {
                 sendUsageEvent(taskId);
                 sendEvent(SseEvent.done(taskId));
                 channel.complete();
+                recordTermination(terminationReason(finishedByTool));
             } catch (Exception e) {
                 if (channel.isAborted() || state == AgentState.ABORTED) {
                     // 断开后残留的写失败 / 取消传播，属正常收尾，不打堆栈
@@ -189,6 +201,7 @@ public abstract class BaseAgent {
                 }
                 log.error("[{}] Execution error", name, e);
                 state = AgentState.ERROR;
+                recordTermination("error");
                 sendEvent(SseEvent.error(taskId, e.getMessage()));
                 channel.complete();
             } finally {
@@ -207,6 +220,7 @@ public abstract class BaseAgent {
             return;
         }
         log.info("[{}] Run aborted by client at step {}", name, currentStep);
+        recordTermination("aborted");
         try {
             onAbort(userPrompt);
         } catch (Exception e) {
@@ -234,6 +248,37 @@ public abstract class BaseAgent {
         return false;
     }
 
+    /**
+     * 终止原因归因（metric tag 只用枚举值）：
+     * hard_stop（LoopBreaker 硬熔断）优先于 terminate_tool（doTerminate 正常收尾）——
+     * 熔断后会收敛 maxSteps 并引导模型 doTerminate，此时「熔断了」才是要暴露的信号；
+     * 两者都不是则为 max_steps 耗尽（最强的任务失败先行指标，无需标准答案即可判定）。
+     * aborted / error 在各自收尾路径单独记录，不经本方法。
+     */
+    private String terminationReason(boolean finishedByTool) {
+        if (isHardStopTriggered()) {
+            return "hard_stop";
+        }
+        return finishedByTool ? "terminate_tool" : "max_steps";
+    }
+
+    /** 硬熔断是否已触发：LoopBreaker 是 ToolCallAgent 的组件，默认 false，由子类覆写。 */
+    protected boolean isHardStopTriggered() {
+        return false;
+    }
+
+    /** 指标埋点绝不允许影响主流程：任何异常只记日志。 */
+    private void recordTermination(String reason) {
+        if (agentMetrics == null) {
+            return;
+        }
+        try {
+            agentMetrics.recordTermination(name, reason, currentStep);
+        } catch (Exception e) {
+            log.warn("[{}] Failed to record termination metric: {}", name, e.getMessage());
+        }
+    }
+
     protected abstract String step() throws Exception;
 
     /**
@@ -257,6 +302,14 @@ public abstract class BaseAgent {
             return null;
         }
         TokenUsageVO usageVO = tokenUsageAccumulator.snapshot();
+        // 顺手落 token/上下文占用直方图（不新增计算，累加器已有全量口径）
+        if (agentMetrics != null) {
+            try {
+                agentMetrics.recordUsage(name, usageVO);
+            } catch (Exception e) {
+                log.warn("[{}] Failed to record usage metric: {}", name, e.getMessage());
+            }
+        }
         if (usageCallback != null) {
             try {
                 usageCallback.accept(usageVO);

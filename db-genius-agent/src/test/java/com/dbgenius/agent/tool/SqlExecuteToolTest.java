@@ -1,5 +1,6 @@
 package com.dbgenius.agent.tool;
 
+import com.dbgenius.agent.metrics.AgentMetrics;
 import com.dbgenius.common.util.AesUtil;
 import com.dbgenius.model.entity.DbConfig;
 import com.dbgenius.model.enums.DbConfigStatus;
@@ -28,7 +29,8 @@ class SqlExecuteToolTest {
     private final DbConfigService dbConfigService = mock(DbConfigService.class);
     private final TrialGuard trialGuard = mock(TrialGuard.class);
     private final DatabaseAdapterRegistry adapterRegistry = mock(DatabaseAdapterRegistry.class);
-    private final SqlExecuteTool tool = new SqlExecuteTool(dbConfigService, trialGuard, adapterRegistry);
+    private final AgentMetrics agentMetrics = mock(AgentMetrics.class);
+    private final SqlExecuteTool tool = new SqlExecuteTool(dbConfigService, trialGuard, adapterRegistry, agentMetrics);
 
     /** 构造一个已通过连通性验证的库配置。 */
     private DbConfig connectedConfig(String dbType) {

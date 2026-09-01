@@ -80,7 +80,12 @@ public class ToolCallAgent extends ReActAgent {
 
     protected final ToolCallback[] availableTools;
     protected final ReasoningChatModel reasoningChatModel;
-    protected final ToolCallingManager toolCallingManager;
+    /**
+     * 构造时用裸实例（ObservationRegistry 为 NOOP，工具执行的 {@code spring.ai.tool}
+     * observation 静默丢弃）；生产由 Handler 通过 {@link #setToolCallingManager}
+     * 注入 Spring 管理的 bean（actuator 在场时带 registry），trace 树才有 execute_tool 节点。
+     */
+    protected ToolCallingManager toolCallingManager;
     protected final ChatOptions chatOptions;
 
     private ChatResponse toolCallChatResponse;
@@ -138,6 +143,16 @@ public class ToolCallAgent extends ReActAgent {
         this.messageSink = messageSink;
     }
 
+    /**
+     * 注入 Spring 管理的 {@link ToolCallingManager}（带 ObservationRegistry），替换构造时的裸实例。
+     * 默认的 exception processor 行为与裸实例一致（错误以工具结果回给模型，不抛出），替换无行为差异。
+     */
+    public void setToolCallingManager(ToolCallingManager toolCallingManager) {
+        if (toolCallingManager != null) {
+            this.toolCallingManager = toolCallingManager;
+        }
+    }
+
     public void setToolOutputGuard(ToolOutputGuard toolOutputGuard) {
         if (toolOutputGuard != null) {
             this.toolOutputGuard = toolOutputGuard;
@@ -156,6 +171,12 @@ public class ToolCallAgent extends ReActAgent {
         this.loopBreaker = loopBreaker;
     }
 
+    /** 终止原因归因给 BaseAgent：硬熔断信号优先于 doTerminate 正常收尾。 */
+    @Override
+    protected boolean isHardStopTriggered() {
+        return loopBreaker != null && loopBreaker.isHardStopTriggered();
+    }
+
     /**
      * 单轮内上下文瘦身的阶梯调度：先做零成本的 Tier-1 确定性观测遮蔽，遮蔽之后仍逼近窗口
      * 才升级到 Tier-3 的 LLM 摘要。两档都通过 {@code context_compact} SSE 事件对前端可见。
@@ -172,6 +193,10 @@ public class ToolCallAgent extends ReActAgent {
                 ObservationElider.Result result = observationElider.elideIfNeeded(
                         messageList, turnStartIndex, systemPrompt, contextWindow, taskId);
                 if (result.elided()) {
+                    if (agentMetrics != null) {
+                        agentMetrics.recordCompact(ContextCompactListener.TIER_ELIDE,
+                                result.beforeTokens() - result.afterTokens());
+                    }
                     // 毫秒级操作，只推 end，避免前端卡片闪烁
                     sendCompactEvent(ContextCompactVO.builder()
                             .phase("end")
@@ -207,6 +232,10 @@ public class ToolCallAgent extends ReActAgent {
 
             @Override
             public void onCompactEnd(String tier, int beforeTokens, int afterTokens, int affectedUnits) {
+                // affectedUnits==0 是压缩失败/未执行的回调，不计入触发率
+                if (agentMetrics != null && affectedUnits > 0) {
+                    agentMetrics.recordCompact(tier, beforeTokens - afterTokens);
+                }
                 sendCompactEvent(ContextCompactVO.builder()
                         .phase("end")
                         .tier(tier)
@@ -352,7 +381,8 @@ public class ToolCallAgent extends ReActAgent {
         // 常见触发场景是工具输出被截断或语句超时后模型原样重试，只靠 maxSteps 兜底
         // 意味着用户要为整整一轮无效模型调用付费并等待。
         if (loopBreaker != null) {
-            List<String> blocked = loopBreaker.inspect(calls);
+            List<String> blocked = loopBreaker.inspect(calls,
+                    agentMetrics != null ? agentMetrics::recordLoopBlocked : null);
             if (!blocked.isEmpty()) {
                 return rejectBlockedCalls(calls, blocked);
             }

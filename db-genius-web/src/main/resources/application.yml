@@ -23,6 +23,16 @@ spring:
         speech: ""
         transcription: ""
       moderation: ""
+    chat:
+      observations:
+        # ⚠️ 生产必须 false：prompt/completion 里有用户库表结构与业务数据
+        log-prompt: false
+        log-completion: false
+        include-error-logging: true
+    tools:
+      observations:
+        # ⚠️ 工具参数/结果含真实 SQL 与查询结果行，生产必须 false
+        include-content: false
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/db_genius?currentSchema=app}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
@@ -44,6 +54,27 @@ spring:
           max-attempts: 3
           initial-interval: 2000
           multiplier: 2
+
+management:
+  tracing:
+    sampling:
+      # 本地/联调全量采样；生产降到 0.1 并在 Collector 侧用 tail_sampling 保住错误 trace
+      # （db-genius 的 Agent 是分钟级任务，Collector 的 decision_wait 必须大于典型执行时长）
+      probability: ${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      # 本地起 docker compose 里的 Jaeger 即可看到 trace；部署环境指向 Collector / Langfuse
+      endpoint: ${MANAGEMENT_OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    distribution:
+      percentiles-histogram:
+        # 让 P50/P95 可在 Prometheus 侧用 histogram_quantile 计算（LLM 时延与业务直方图）
+        "gen_ai.client": true
+        "dbgenius": true
 
 mybatis-plus:
   type-enums-package: com.dbgenius.model.enums

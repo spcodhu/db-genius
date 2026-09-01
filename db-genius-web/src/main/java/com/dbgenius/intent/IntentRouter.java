@@ -4,6 +4,7 @@ import com.dbgenius.agent.compress.AutoCompressService;
 import com.dbgenius.agent.intent.ChatContext;
 import com.dbgenius.agent.intent.IntentClassifier;
 import com.dbgenius.agent.intent.IntentHandler;
+import com.dbgenius.agent.metrics.AgentMetrics;
 import com.dbgenius.agent.stream.SseChannel;
 import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.common.exception.BusinessException;
@@ -47,6 +48,7 @@ public class IntentRouter {
     private final Executor chatTaskExecutor;
     private final AutoCompressService autoCompressService;
     private final MessageService messageService;
+    private final AgentMetrics agentMetrics;
 
     private static final int HISTORY_CONTEXT_SIZE = 5;
     private static final double CONFIDENCE_THRESHOLD = IntentClassifier.CONFIDENCE_THRESHOLD;
@@ -93,11 +95,17 @@ public class IntentRouter {
                 log.info("[IntentRouter] classified intent={}, confidence={}, needsClarification={}",
                         result.intent(), result.confidence(), result.needsClarification());
 
+                // 意图指标：置信度分布 + 澄清触发率（用户已确认的 confirmedIntent 分支不算分类，不记录）
+                boolean clarified = result.needsClarification() || result.confidence() < CONFIDENCE_THRESHOLD;
+                agentMetrics.recordIntent(
+                        result.intent() != null ? result.intent().getCode() : "unknown",
+                        result.confidence(), clarified);
+
                 // 6. 推送分类结果
                 channel.send(SseEvent.of(taskId, 0, "classified", result));
 
                 // 7. 判断是否需要确认
-                if (result.needsClarification() || result.confidence() < CONFIDENCE_THRESHOLD) {
+                if (clarified) {
                     sendClarificationEvent(channel, taskId, result, request, locale);
                     // 澄清分支不进入 Handler，分类消耗的 token 也需告知前端。
                     // 必须在 complete 之前推送：通道结束后一切写入都会被丢弃

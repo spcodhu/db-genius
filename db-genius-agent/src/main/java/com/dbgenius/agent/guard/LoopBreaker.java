@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * 单次 Agent 运行内的死循环护栏：<b>每个 Agent 实例持有一个，状态不跨轮复用</b>。
@@ -65,6 +66,15 @@ public class LoopBreaker {
      * @return 需要拦截时返回可直接回给模型的反馈文本（按 toolCallId 一一对应）；放行返回空列表
      */
     public List<String> inspect(List<AssistantMessage.ToolCall> toolCalls) {
+        return inspect(toolCalls, null);
+    }
+
+    /**
+     * 同 {@link #inspect(List)}，另对每次<b>真实重复</b>的调用回调 {@code repeatListener}
+     * （参数为工具名）。同批被连坐拦截（未重复）的调用不回调——指标口径只数真重复。
+     * 监听器异常只记日志，绝不影响拦截判定。
+     */
+    public List<String> inspect(List<AssistantMessage.ToolCall> toolCalls, Consumer<String> repeatListener) {
         if (toolCalls == null || toolCalls.isEmpty()) {
             return List.of();
         }
@@ -77,6 +87,7 @@ public class LoopBreaker {
             }
             if (count >= repeatThreshold) {
                 blocked = true;
+                notifyRepeat(repeatListener, toolCall.name());
                 feedback.add(repeatedCallFeedback(toolCall.name(), count));
             } else {
                 feedback.add(null);
@@ -88,6 +99,17 @@ public class LoopBreaker {
         log.warn("[LoopBreaker] blocked repeated tool call(s): {}", feedback.stream().filter(f -> f != null).count());
         // 未触发重复的调用一并拦截：一步内多工具时不能只执行一半，否则 tool_call/tool_response 配对会断
         return feedback.stream().map(f -> f != null ? f : companionBlockedFeedback()).toList();
+    }
+
+    private void notifyRepeat(Consumer<String> repeatListener, String toolName) {
+        if (repeatListener == null) {
+            return;
+        }
+        try {
+            repeatListener.accept(toolName);
+        } catch (Exception e) {
+            log.warn("[LoopBreaker] repeat listener failed: {}", e.getMessage());
+        }
     }
 
     /** 记录一次工具输出被截断，返回是否需要注入「改用聚合/分页」的一次性指引。 */

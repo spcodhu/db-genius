@@ -27,9 +27,22 @@ services:
       ALIYUN_OCR_ENABLED: ${ALIYUN_OCR_ENABLED:-false}
       ALIYUN_OCR_ENDPOINT: ${ALIYUN_OCR_ENDPOINT:-ocr-api.cn-hangzhou.aliyuncs.com}
       DB_GENIUS_TRIAL_ENABLED: ${DB_GENIUS_TRIAL_ENABLED:-false}
+      # trace 导出到同网络的 Jaeger（本地开发反馈闭环，见 docs/agent-metrics-observability.md 阶段 0）
+      MANAGEMENT_OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
     depends_on:
       rabbitmq:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Jaeger all-in-one：原生接收 OTLP（4318 HTTP / 4317 gRPC），UI 在 16686。
+  # 本地开发阶段不需要单独部署 Collector（那是生产为了脱敏/尾采样才引入的）
+  jaeger:
+    image: jaegertracing/all-in-one:1.76.0
+    ports:
+      - "4318:4318"
+      - "16686:16686"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
     restart: unless-stopped
 
   rabbitmq:

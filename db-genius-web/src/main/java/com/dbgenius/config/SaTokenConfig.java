@@ -24,7 +24,10 @@ public class SaTokenConfig implements WebMvcConfigurer {
                         "/auth/login",
                         "/trial/status",
                         "/sales/contact",
-                        "/health"
+                        "/health",
+                        // actuator 端点（/api/actuator/**）供 Prometheus 抓取与探活，不做登录拦截；
+                        // 生产环境如需保护应在网关/网络层收口，而不是在这里加鉴权
+                        "/actuator/**"
                 );
     }
 }

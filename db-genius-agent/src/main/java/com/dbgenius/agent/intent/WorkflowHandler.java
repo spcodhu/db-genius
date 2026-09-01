@@ -8,6 +8,7 @@ import com.dbgenius.agent.ToolCallAgent;
 import com.dbgenius.agent.compress.ObservationElider;
 import com.dbgenius.agent.guard.LoopBreakerFactory;
 import com.dbgenius.agent.compress.StepHistoryCondenser;
+import com.dbgenius.agent.metrics.AgentMetrics;
 import com.dbgenius.agent.tool.FileReadTool;
 import com.dbgenius.agent.tool.ImageReadTool;
 import com.dbgenius.agent.tool.SqlExecuteTool;
@@ -40,6 +41,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -75,6 +77,8 @@ public class WorkflowHandler implements IntentHandler {
     private final ObservationElider observationElider;
     private final LoopBreakerFactory loopBreakerFactory;
     private final MessageService messageService;
+    private final ToolCallingManager toolCallingManager;
+    private final AgentMetrics agentMetrics;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -151,6 +155,9 @@ public class WorkflowHandler implements IntentHandler {
         agent.setLoopBreaker(loopBreakerFactory.create());
         agent.setStepCondenser(stepHistoryCondenser);
         agent.setToolOutputGuard(toolOutputGuard);
+        // 带 ObservationRegistry 的 ToolCallingManager（替换构造时的裸实例），工具执行才有 spring.ai.tool span
+        agent.setToolCallingManager(toolCallingManager);
+        agent.setAgentMetrics(agentMetrics);
         agent.setMessageSink(new ToolCallAgent.AgentMessageSink() {
             @Override
             public void onAssistant(int step, String content, String reasoningContent, String toolCallsJson) {

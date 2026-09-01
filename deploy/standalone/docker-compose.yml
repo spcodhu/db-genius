@@ -85,6 +85,11 @@ services:
       ALIYUN_OCR_ENABLED: ${ALIYUN_OCR_ENABLED:-false}
       ALIYUN_OCR_ENDPOINT: ${ALIYUN_OCR_ENDPOINT:-ocr-api.cn-hangzhou.aliyuncs.com}
       DB_GENIUS_TRIAL_ENABLED: ${DB_GENIUS_TRIAL_ENABLED:-false}
+      # 可观测性：本 compose 未含 Jaeger/Collector，采样默认 0（关闭 trace 导出，
+      # 避免 OTLP 空指 localhost:4318 的周期性报错日志）。部署观测栈后把采样调到
+      # 1.0（或生产 0.1）并把 endpoint 指向你的 Collector/Jaeger 即可，无需改镜像
+      MANAGEMENT_TRACING_SAMPLING_PROBABILITY: ${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:-0.0}
+      MANAGEMENT_OTLP_TRACING_ENDPOINT: ${MANAGEMENT_OTLP_TRACING_ENDPOINT:-http://localhost:4318/v1/traces}
     depends_on:
       postgres:
         condition: service_healthy

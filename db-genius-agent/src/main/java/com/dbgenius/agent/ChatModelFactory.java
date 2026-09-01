@@ -4,6 +4,8 @@ import com.dbgenius.agent.usage.TokenUsageAccumulator;
 import com.dbgenius.agent.usage.UsageTrackingChatModel;
 import com.dbgenius.common.util.AesUtil;
 import com.dbgenius.model.entity.UserModelConfig;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.observation.ObservationRegistry;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.model.openai.autoconfigure.OpenAiChatProperties;
@@ -13,6 +15,7 @@ import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.WebClient;
 
@@ -33,6 +36,10 @@ public class ChatModelFactory {
     private final RestClient.Builder restClientBuilder;
     private final WebClient.Builder webClientBuilder;
     private final ToolCallingManager toolCallingManager;
+    /** 容器级 ObservationRegistry（actuator 提供）；不传进模型时默认为 NOOP，observation 静默丢弃 */
+    private final ObservationRegistry observationRegistry;
+    /** 业务指标注册表：转发给 ReasoningChatModel 记录 TTFT */
+    private final MeterRegistry meterRegistry;
 
     @Value("${db-genius.encrypt-key}")
     private String encryptKey;
@@ -47,10 +54,14 @@ public class ChatModelFactory {
 
     public ChatModelFactory(RestClient.Builder restClientBuilder,
                             WebClient.Builder webClientBuilder,
-                            ToolCallingManager toolCallingManager) {
+                            ToolCallingManager toolCallingManager,
+                            ObservationRegistry observationRegistry,
+                            MeterRegistry meterRegistry) {
         this.restClientBuilder = restClientBuilder;
         this.webClientBuilder = webClientBuilder;
         this.toolCallingManager = toolCallingManager;
+        this.observationRegistry = observationRegistry;
+        this.meterRegistry = meterRegistry;
     }
 
     /**
@@ -91,6 +102,8 @@ public class ChatModelFactory {
                 .openAiApi(openAiApi)
                 .toolCallingManager(toolCallingManager)
                 .defaultOptions(defaultOptions)
+                // 不传 registry 时模型默认 NOOP，Spring AI 自带的 gen_ai.client.* 埋点静默丢弃
+                .observationRegistry(observationRegistry)
                 .build();
 
         // 构造 ReasoningChatModel 需要的 OpenAiChatProperties（仅传必要的默认 options）
@@ -101,6 +114,11 @@ public class ChatModelFactory {
         ReasoningChatModel reasoningModel = new ReasoningChatModel(
                 openAiApi, chatModel, chatProperties, toolCallingManager);
         reasoningModel.setDropStaleReasoning(dropStaleReasoning);
+        // 断点 3：Agent 热路径绕过 OpenAiChatModel 直连 API，Spring AI 埋点不生效，
+        // 观测由 ReasoningChatModel 内部手写 Observation 补齐（见该类注释）
+        reasoningModel.setObservationRegistry(observationRegistry);
+        reasoningModel.setMeterRegistry(meterRegistry);
+        reasoningModel.setGenAiSystem(resolveGenAiSystem(config));
 
         ChatModel effectiveChatModel = chatModel;
         if (accumulator != null) {
@@ -112,6 +130,14 @@ public class ChatModelFactory {
         ChatClient chatClient = ChatClient.builder(effectiveChatModel).build();
 
         return new ChatModelSession(effectiveChatModel, reasoningModel, chatClient);
+    }
+
+    /**
+     * gen_ai.system 属性取值：供应商 code（deepseek/openai/ollama/system 等，枚举集合有界，
+     * 符合 metric tag 基数纪律）；缺省 "unknown"。
+     */
+    private String resolveGenAiSystem(UserModelConfig config) {
+        return StringUtils.hasText(config.getProviderCode()) ? config.getProviderCode() : "unknown";
     }
 
     private String resolveApiKey(UserModelConfig config) {

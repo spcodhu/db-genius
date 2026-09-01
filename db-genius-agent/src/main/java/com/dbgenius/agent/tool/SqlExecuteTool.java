@@ -1,5 +1,6 @@
 package com.dbgenius.agent.tool;
 
+import com.dbgenius.agent.metrics.AgentMetrics;
 import com.dbgenius.common.exception.BusinessException;
 import com.dbgenius.common.util.AesUtil;
 import com.dbgenius.common.util.SqlSafetyGuard;
@@ -46,6 +47,7 @@ public class SqlExecuteTool {
     private final DbConfigService dbConfigService;
     private final TrialGuard trialGuard;
     private final DatabaseAdapterRegistry adapterRegistry;
+    private final AgentMetrics agentMetrics;
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${db-genius.encrypt-key}")
@@ -101,6 +103,8 @@ public class SqlExecuteTool {
                 SqlSafetyGuard.assertSafe(sql);
             }
         } catch (BusinessException e) {
+            // 安全红线拦截计数：衡量「护栏在工作」，要告警的是趋势突增而非绝对值
+            agentMetrics.recordSqlBlocked(config.getDbType());
             log.warn("安全红线拦截破坏性命令（db {}）：{}", dbConfigId, sql);
             return failureJson(e.getMessage());
         }

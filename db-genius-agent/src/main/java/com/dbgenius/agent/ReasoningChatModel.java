@@ -2,6 +2,10 @@ package com.dbgenius.agent;
 
 import com.dbgenius.agent.stream.StreamCancelledException;
 import com.dbgenius.agent.usage.TokenUsageAccumulator;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -40,6 +44,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
@@ -57,7 +63,14 @@ import java.util.function.Consumer;
  * 回调，避免 think 阶段长时间无事件），内部聚合成与 {@code call()} 同构的响应，
  * 保留 tool call 轮次的 reasoning_content 回传能力。
  *
- * <p>仅支持文本消息（本项目无多模态场景）；不含重试与观测埋点。
+ * <p><b>观测埋点（断点 3 的手写补偿）：</b>{@code call()} 与 {@code streamAggregated()}
+ * 为保住 reasoning_content 回传而直连 {@link OpenAiApi}，绕过了 {@link OpenAiChatModel}
+ * 自带的 gen_ai.* 埋点（只有 {@code stream()} 转发给 delegate 才享受官方观测）。
+ * 因此本类在两个直连方法上按 OTel GenAI 语义手写 {@code gen_ai.client.operation}
+ * Observation（span 名 {@code chat <model>}），并用 {@link MeterRegistry} 记录 TTFT
+ * （首条 reasoning/content 增量到达时刻）。未装配时 registry 为 NOOP、零开销。
+ *
+ * <p>仅支持文本消息（本项目无多模态场景）；不含重试。
  * 未来升级到 Spring AI 2.0（原生支持回传）后本类可整体删除。
  */
 @Slf4j
@@ -128,6 +141,18 @@ public class ReasoningChatModel implements ChatModel {
     /** 本轮请求的 token 用量累加器，由 ChatModelFactory 注入，可为 null（不记账） */
     private TokenUsageAccumulator tokenUsageAccumulator;
 
+    /** 观测注册表：默认 NOOP（测试/未装配时零开销），生产由 ChatModelFactory 注入容器 bean */
+    private ObservationRegistry observationRegistry = ObservationRegistry.NOOP;
+
+    /** TTFT 直方图所需的指标注册表，由 ChatModelFactory 注入；null 表示不记录 TTFT */
+    private MeterRegistry meterRegistry;
+
+    /**
+     * {@code gen_ai.system} 属性值（供应商标识，如 deepseek/openai），由 ChatModelFactory
+     * 按用户配置注入。取枚举化的 provider code，符合 metric tag 基数纪律。
+     */
+    private String genAiSystem = "unknown";
+
     /**
      * 是否只回传最后一条 assistant 消息的 reasoning_content（Tier-2 单轮内瘦身，默认关闭）。
      * 由 ChatModelFactory 按配置注入；各供应商对缺失历史 reasoning 的容忍度不一，需灰度验证。
@@ -149,6 +174,22 @@ public class ReasoningChatModel implements ChatModel {
         this.tokenUsageAccumulator = tokenUsageAccumulator;
     }
 
+    public void setObservationRegistry(ObservationRegistry observationRegistry) {
+        if (observationRegistry != null) {
+            this.observationRegistry = observationRegistry;
+        }
+    }
+
+    public void setMeterRegistry(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
+    }
+
+    public void setGenAiSystem(String genAiSystem) {
+        if (genAiSystem != null && !genAiSystem.isBlank()) {
+            this.genAiSystem = genAiSystem;
+        }
+    }
+
     public void setDropStaleReasoning(boolean dropStaleReasoning) {
         this.dropStaleReasoning = dropStaleReasoning;
     }
@@ -168,13 +209,22 @@ public class ReasoningChatModel implements ChatModel {
 
     @Override
     public ChatResponse call(Prompt prompt) {
-        OpenAiChatOptions requestOptions = mergeOptions(prompt.getOptions());
-        ChatCompletionRequest request = createRequest(prompt.getInstructions(), requestOptions, false);
-        ChatCompletion chatCompletion = this.openAiApi.chatCompletionEntity(request).getBody();
-        Assert.notNull(chatCompletion, "chat completion must not be null");
-        ChatResponse response = toChatResponse(chatCompletion);
-        recordUsage(response.getMetadata().getUsage());
-        return response;
+        Observation observation = startChatObservation();
+        try (Observation.Scope scope = observation.openScope()) {
+            OpenAiChatOptions requestOptions = mergeOptions(prompt.getOptions());
+            ChatCompletionRequest request = createRequest(prompt.getInstructions(), requestOptions, false);
+            ChatCompletion chatCompletion = this.openAiApi.chatCompletionEntity(request).getBody();
+            Assert.notNull(chatCompletion, "chat completion must not be null");
+            ChatResponse response = toChatResponse(chatCompletion);
+            recordUsage(response.getMetadata().getUsage());
+            enrichChatObservation(observation, response);
+            return response;
+        } catch (RuntimeException e) {
+            observation.error(e);
+            throw e;
+        } finally {
+            observation.stop();
+        }
     }
 
     @Override
@@ -212,6 +262,91 @@ public class ReasoningChatModel implements ChatModel {
      */
     public ChatResponse streamAggregated(Prompt prompt, Consumer<String> reasoningDeltaConsumer,
                                          Consumer<String> contentDeltaConsumer) {
+        Observation observation = startChatObservation();
+        long startNanos = System.nanoTime();
+        AtomicBoolean ttftRecorded = new AtomicBoolean(false);
+        Consumer<String> reasoningConsumer = wrapForTtft(reasoningDeltaConsumer, ttftRecorded, startNanos);
+        Consumer<String> contentConsumer = wrapForTtft(contentDeltaConsumer, ttftRecorded, startNanos);
+        try (Observation.Scope scope = observation.openScope()) {
+            ChatResponse response = doStreamAggregated(prompt, reasoningConsumer, contentConsumer);
+            // ⚠️ 客户端中断不是错误：CLIENT_ABORTED 只进 finish_reasons 属性，绝不 observation.error()，
+            // 与「客户端断开不打 ERROR」约定一致，避免用户正常点停止污染错误率指标
+            enrichChatObservation(observation, response);
+            return response;
+        } catch (RuntimeException e) {
+            observation.error(e);
+            throw e;
+        } finally {
+            observation.stop();
+        }
+    }
+
+    /**
+     * 开启一次 {@code gen_ai.client.operation} Observation（OTel GenAI 语义，span 名 {@code chat <model>}）。
+     * 与 Spring AI 官方实现对齐的低基数属性；token 用量与 finish_reasons 在响应后由
+     * {@link #enrichChatObservation} 补成高基数属性。
+     */
+    private Observation startChatObservation() {
+        return Observation.createNotStarted("gen_ai.client.operation", observationRegistry)
+                .contextualName("chat " + modelName())
+                .lowCardinalityKeyValue("gen_ai.operation.name", "chat")
+                .lowCardinalityKeyValue("gen_ai.system", genAiSystem)
+                .lowCardinalityKeyValue("gen_ai.request.model", modelName())
+                .start();
+    }
+
+    /** 响应落账：finish_reasons 与 token 用量写为 span 属性（高基数，不进 metric tag）。 */
+    private void enrichChatObservation(Observation observation, ChatResponse response) {
+        if (response == null) {
+            return;
+        }
+        if (response.getResult() != null && response.getResult().getMetadata() != null
+                && StringUtils.hasText(response.getResult().getMetadata().getFinishReason())) {
+            observation.highCardinalityKeyValue("gen_ai.response.finish_reasons",
+                    "[" + response.getResult().getMetadata().getFinishReason() + "]");
+        }
+        if (response.getMetadata() != null && response.getMetadata().getUsage() != null) {
+            Usage usage = response.getMetadata().getUsage();
+            observation.highCardinalityKeyValue("gen_ai.usage.input_tokens",
+                    String.valueOf(usage.getPromptTokens()));
+            observation.highCardinalityKeyValue("gen_ai.usage.output_tokens",
+                    String.valueOf(usage.getCompletionTokens()));
+        }
+    }
+
+    /**
+     * 给增量回调包一层 TTFT 计时：第一条 reasoning <b>或</b> content 增量到达即记录
+     * （非推理模型没有 reasoning 增量，只看 reasoning 会漏记）。未装配 MeterRegistry 时原样返回。
+     */
+    private Consumer<String> wrapForTtft(Consumer<String> consumer, AtomicBoolean ttftRecorded, long startNanos) {
+        if (meterRegistry == null) {
+            return consumer;
+        }
+        return delta -> {
+            if (ttftRecorded.compareAndSet(false, true)) {
+                ttftTimer().record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
+            }
+            if (consumer != null) {
+                consumer.accept(delta);
+            }
+        };
+    }
+
+    /** TTFT 直方图：SSE 场景下用户主观「快不快」的决定性指标。tag 只用枚举值（供应商 + 模型名）。 */
+    private Timer ttftTimer() {
+        return Timer.builder("dbgenius.llm.ttft")
+                .description("Time to first delta of streaming LLM calls")
+                .tags("gen_ai.system", genAiSystem, "gen_ai.request.model", modelName())
+                .register(meterRegistry);
+    }
+
+    private String modelName() {
+        return defaultOptions.getModel() != null ? defaultOptions.getModel() : "unknown";
+    }
+
+    /** {@link #streamAggregated} 的执行体：流式拉取 + 聚合，观测与 TTFT 由外层壳负责。 */
+    private ChatResponse doStreamAggregated(Prompt prompt, Consumer<String> reasoningDeltaConsumer,
+                                            Consumer<String> contentDeltaConsumer) {
         OpenAiChatOptions requestOptions = mergeOptions(prompt.getOptions());
         ChatCompletionRequest request = createRequest(prompt.getInstructions(), requestOptions, true);
 
